@@ -1,0 +1,26 @@
+Memory provider verification receipt
+
+Repository-local verification:
+- Root test runner: node tests/run-all.mjs -> 65 passed, 0 failed.
+- OpenViking independent runner: node extensions/pi-viking-memory/providers/openviking/tests/run-tests.mjs -> 60 passed, 0 failed.
+- Source syntax checker: node verification/check-memory-sources.mjs -> 60 files, 0 failures.
+- Pi entrypoint loading: Viking and OpenViking both exit 0 with `pi --offline -e`.
+- Static deletion and exact-secret scans: pass.
+
+Viking Memory remote verification:
+- Read-only POST /api/memory/get_context -> code=0, message=success, data present, request id present.
+- No Viking write or delete endpoint was called by the probe.
+
+OpenViking local Docker verification:
+- Image: ghcr.io/volcengine/openviking:latest, reported server version v0.4.16.
+- Container: pi-extentions-openviking, Docker health: healthy.
+- GET /health -> HTTP 200, healthy=true, auth_mode=trusted.
+- GET /ready -> status=ready; AGFS, vectordb, API key manager, embedding and Ollama checks ok.
+- POST /api/v1/search/search with mode=context -> status=ok, fresh local store returned zero entries.
+- verification/openviking-readonly-probe.json -> status=passed, server=local-docker.
+- No session/add, commit, resource ingest, or delete operation was executed by local read-only verification.
+
+Security:
+- `.runtime/` is gitignored; root key, ovcli config, and Ollama model data are not tracked.
+- Runtime config files use owner-only permissions.
+- Capture, pending queue, and debug logs sanitize sensitive fields.

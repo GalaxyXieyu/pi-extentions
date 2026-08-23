@@ -1,0 +1,9 @@
+{
+  "operation": "profile/add",
+  "backend": "viking-memory",
+  "collection": "piAgent",
+  "profile_type": "profile_v1",
+  "result": "schema-confirmed",
+  "message": "The console screenshot confirms profile_v1 is configured for this collection.",
+  "next_verification": "verification/viking-profile-extraction-20260823025257.json"
+}

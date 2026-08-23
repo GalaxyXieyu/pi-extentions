@@ -1,0 +1,370 @@
+TAP version 13
+# Subtest: formatRecall adds provenance, budget and deduplicates
+ok 1 - formatRecall adds provenance, budget and deduplicates
+  ---
+  duration_ms: 1.2235
+  type: 'test'
+  ...
+# Subtest: injectRecall adds one block and does not duplicate
+ok 2 - injectRecall adds one block and does not duplicate
+  ---
+  duration_ms: 0.158833
+  type: 'test'
+  ...
+# Subtest: stripMemoryContext prevents recall pollution
+ok 3 - stripMemoryContext prevents recall pollution
+  ---
+  duration_ms: 0.567125
+  type: 'test'
+  ...
+# Subtest: sensitive sanitizer redacts common credentials
+ok 4 - sensitive sanitizer redacts common credentials
+  ---
+  duration_ms: 1.786416
+  type: 'test'
+  ...
+# Subtest: sensitive sanitizer handles structured tool parts
+ok 5 - sensitive sanitizer handles structured tool parts
+  ---
+  duration_ms: 0.446625
+  type: 'test'
+  ...
+# Subtest: OpenViking capability probe returns verified structured support
+ok 6 - OpenViking capability probe returns verified structured support
+  ---
+  duration_ms: 32.4045
+  type: 'test'
+  ...
+# Subtest: extractBranchCapturePayloads converts user text to message payload
+ok 7 - extractBranchCapturePayloads converts user text to message payload
+  ---
+  duration_ms: 2.69525
+  type: 'test'
+  ...
+# Subtest: extractBranchCapturePayloads emits structured tool parts
+ok 8 - extractBranchCapturePayloads emits structured tool parts
+  ---
+  duration_ms: 2.500125
+  type: 'test'
+  ...
+# Subtest: extractBranchCapturePayloads resets watermark when branch shrinks
+ok 9 - extractBranchCapturePayloads resets watermark when branch shrinks
+  ---
+  duration_ms: 0.264709
+  type: 'test'
+  ...
+# Subtest: extractBranchCapturePayloads faithful mode keeps ack, short, and punctuation turns
+ok 10 - extractBranchCapturePayloads faithful mode keeps ack, short, and punctuation turns
+  ---
+  duration_ms: 1.970333
+  type: 'test'
+  ...
+# Subtest: extractBranchCapturePayloads faithful mode still skips commands and plugin status
+ok 11 - extractBranchCapturePayloads faithful mode still skips commands and plugin status
+  ---
+  duration_ms: 0.08575
+  type: 'test'
+  ...
+# Subtest: tool-only payloads carry tool output once, not duplicated as text
+ok 12 - tool-only payloads carry tool output once, not duplicated as text
+  ---
+  duration_ms: 0.213042
+  type: 'test'
+  ...
+# Subtest: OV client classifies timeout and redacts HTTP errors
+ok 13 - OV client classifies timeout and redacts HTTP errors
+  ---
+  duration_ms: 3.054333
+  type: 'test'
+  ...
+# Subtest: loadConfig defaults takeover on
+ok 14 - loadConfig defaults takeover on
+  ---
+  duration_ms: 9.142
+  type: 'test'
+  ...
+# Subtest: loadConfig maps nested takeover block
+ok 15 - loadConfig maps nested takeover block
+  ---
+  duration_ms: 0.994375
+  type: 'test'
+  ...
+# Subtest: loadConfigFromModuleUrl decodes Unicode paths
+ok 16 - loadConfigFromModuleUrl decodes Unicode paths
+  ---
+  duration_ms: 1.123542
+  type: 'test'
+  ...
+# Subtest: loadConfig keeps top-level takeover aliases for compatibility
+ok 17 - loadConfig keeps top-level takeover aliases for compatibility
+  ---
+  duration_ms: 1.252166
+  type: 'test'
+  ...
+# Subtest: loadConfig clamps invalid takeover values
+ok 18 - loadConfig clamps invalid takeover values
+  ---
+  duration_ms: 1.1995
+  type: 'test'
+  ...
+# Subtest: loadConfig derives workspace peer by default
+ok 19 - loadConfig derives workspace peer by default
+  ---
+  duration_ms: 0.877875
+  type: 'test'
+  ...
+# Subtest: loadConfig keeps explicit peer and actor recall scope
+ok 20 - loadConfig keeps explicit peer and actor recall scope
+  ---
+  duration_ms: 1.033334
+  type: 'test'
+  ...
+# Subtest: credentials loader rejects group-readable config files
+ok 21 - credentials loader rejects group-readable config files
+  ---
+  duration_ms: 6.633125
+  type: 'test'
+  ...
+# Subtest: pending queue redacts payloads and uses owner-only permissions
+ok 22 - pending queue redacts payloads and uses owner-only permissions
+  ---
+  duration_ms: 16.310375
+  type: 'test'
+  ...
+# Subtest: OpenViking provider exposes native capability matrix
+ok 23 - OpenViking provider exposes native capability matrix
+  ---
+  duration_ms: 1.067708
+  type: 'test'
+  ...
+# Subtest: OpenViking provider uses real search, message, and commit HTTP contracts
+ok 24 - OpenViking provider uses real search, message, and commit HTTP contracts
+  ---
+  duration_ms: 27.568959
+  type: 'test'
+  ...
+# Subtest: OpenViking provider does not silently fake profile writes
+ok 25 - OpenViking provider does not silently fake profile writes
+  ---
+  duration_ms: 0.388958
+  type: 'test'
+  ...
+# Subtest: queued recall waits for the context phase and still injects current-query memory
+ok 26 - queued recall waits for the context phase and still injects current-query memory
+  ---
+  duration_ms: 2.136875
+  type: 'test'
+  ...
+# Subtest: recall sends the OV session id so dedup and expansion engage
+ok 27 - recall sends the OV session id so dedup and expansion engage
+  ---
+  duration_ms: 1.673375
+  type: 'test'
+  ...
+# Subtest: a queued short prompt clears the previous recall block
+ok 28 - a queued short prompt clears the previous recall block
+  ---
+  duration_ms: 0.79875
+  type: 'test'
+  ...
+# Subtest: context search falls back to recall endpoint
+ok 29 - context search falls back to recall endpoint
+  ---
+  duration_ms: 24.338917
+  type: 'test'
+  ...
+# Subtest: ensureSession creates the remote OpenViking session before capture
+ok 30 - ensureSession creates the remote OpenViking session before capture
+  ---
+  duration_ms: 0.575125
+  type: 'test'
+  ...
+# Subtest: syncBranch returns added token accounting and delivered status
+ok 31 - syncBranch returns added token accounting and delivered status
+  ---
+  duration_ms: 5.790375
+  type: 'test'
+  ...
+# Subtest: commit writes success trace_id to the pi debug log
+ok 32 - commit writes success trace_id to the pi debug log
+  ---
+  duration_ms: 2.508792
+  type: 'test'
+  ...
+# Subtest: commit writes failure trace_id to the pi debug log
+ok 33 - commit writes failure trace_id to the pi debug log
+  ---
+  duration_ms: 0.908708
+  type: 'test'
+  ...
+# Subtest: queued addMessage makes takeover flush barrier false until replay succeeds
+ok 34 - queued addMessage makes takeover flush barrier false until replay succeeds
+  ---
+  duration_ms: 3.671
+  type: 'test'
+  ...
+# Subtest: current-session addMessage 500 remains queued and keeps barrier closed
+ok 35 - current-session addMessage 500 remains queued and keeps barrier closed
+  ---
+  duration_ms: 1.666042
+  type: 'test'
+  ...
+# Subtest: other-session addMessage and commit queue entries do not block takeover barrier
+ok 36 - other-session addMessage and commit queue entries do not block takeover barrier
+  ---
+  duration_ms: 1.617167
+  type: 'test'
+  ...
+# Subtest: restoreWatermark prevents pi -c from re-syncing already captured entries
+ok 37 - restoreWatermark prevents pi -c from re-syncing already captured entries
+  ---
+  duration_ms: 0.402
+  type: 'test'
+  ...
+# Subtest: flattenContent handles strings and text arrays
+ok 38 - flattenContent handles strings and text arrays
+  ---
+  duration_ms: 0.570458
+  type: 'test'
+  ...
+# Subtest: fingerprintMessage includes role length and 200-char prefix
+ok 39 - fingerprintMessage includes role length and 200-char prefix
+  ---
+  duration_ms: 0.326042
+  type: 'test'
+  ...
+# Subtest: user turn helpers ignore injected overview messages
+ok 40 - user turn helpers ignore injected overview messages
+  ---
+  duration_ms: 0.241583
+  type: 'test'
+  ...
+# Subtest: estimateTokens and truncateToTokens handle CJK conservatively
+ok 41 - estimateTokens and truncateToTokens handle CJK conservatively
+  ---
+  duration_ms: 2.580625
+  type: 'test'
+  ...
+# Subtest: estimatePayloadTokens counts content and structured parts
+ok 42 - estimatePayloadTokens counts content and structured parts
+  ---
+  duration_ms: 0.153042
+  type: 'test'
+  ...
+# Subtest: buildOverviewMessage is byte-stable for the same inputs
+ok 43 - buildOverviewMessage is byte-stable for the same inputs
+  ---
+  duration_ms: 0.710041
+  type: 'test'
+  ...
+# Subtest: countUndeliveredForSession only counts addMessage for the same session
+ok 44 - countUndeliveredForSession only counts addMessage for the same session
+  ---
+  duration_ms: 0.129459
+  type: 'test'
+  ...
+# Subtest: transformContext drops covered turns and injects overview before recall
+ok 45 - transformContext drops covered turns and injects overview before recall
+  ---
+  duration_ms: 0.3065
+  type: 'test'
+  ...
+# Subtest: transformContext is stable between commits
+ok 46 - transformContext is stable between commits
+  ---
+  duration_ms: 0.249125
+  type: 'test'
+  ...
+# Subtest: transformContext resets boundary on fingerprint mismatch
+ok 47 - transformContext resets boundary on fingerprint mismatch
+  ---
+  duration_ms: 0.545167
+  type: 'test'
+  ...
+# Subtest: restore uses the last ov-takeover entry and restores syncedEntryCount
+ok 48 - restore uses the last ov-takeover entry and restores syncedEntryCount
+  ---
+  duration_ms: 0.196042
+  type: 'test'
+  ...
+# Subtest: onTurnSynced waits for threshold and enough user turns
+ok 49 - onTurnSynced waits for threshold and enough user turns
+  ---
+  duration_ms: 0.324458
+  type: 'test'
+  ...
+# Subtest: commitAndAdvance advances boundary and persists after overview is ready
+ok 50 - commitAndAdvance advances boundary and persists after overview is ready
+  ---
+  duration_ms: 0.168375
+  type: 'test'
+  ...
+# Subtest: commitAndAdvance keeps pending tokens when flush fails
+ok 51 - commitAndAdvance keeps pending tokens when flush fails
+  ---
+  duration_ms: 0.056209
+  type: 'test'
+  ...
+# Subtest: commitAndAdvance keeps boundary unchanged when overview is not ready
+ok 52 - commitAndAdvance keeps boundary unchanged when overview is not ready
+  ---
+  duration_ms: 0.06125
+  type: 'test'
+  ...
+# Subtest: concurrent commitAndAdvance calls are serialized
+ok 53 - concurrent commitAndAdvance calls are serialized
+  ---
+  duration_ms: 0.126209
+  type: 'test'
+  ...
+# Subtest: handleBeforeCompact returns OV summary and resets boundary
+ok 54 - handleBeforeCompact returns OV summary and resets boundary
+  ---
+  duration_ms: 0.117958
+  type: 'test'
+  ...
+# Subtest: handleBeforeCompact fail-opens without firstKeptEntryId or overview
+ok 55 - handleBeforeCompact fail-opens without firstKeptEntryId or overview
+  ---
+  duration_ms: 0.139209
+  type: 'test'
+  ...
+# Subtest: disabled takeover is a passthrough
+ok 56 - disabled takeover is a passthrough
+  ---
+  duration_ms: 0.070542
+  type: 'test'
+  ...
+# Subtest: shutdown persists deduped state once
+ok 57 - shutdown persists deduped state once
+  ---
+  duration_ms: 0.067917
+  type: 'test'
+  ...
+# Subtest: pi URI guard blocks builtin file tools on viking URIs
+ok 58 - pi URI guard blocks builtin file tools on viking URIs
+  ---
+  duration_ms: 0.615458
+  type: 'test'
+  ...
+# Subtest: pi URI guard blocks bash commands containing viking URI
+ok 59 - pi URI guard blocks bash commands containing viking URI
+  ---
+  duration_ms: 0.100375
+  type: 'test'
+  ...
+# Subtest: pi URI guard allows normal local paths and OpenViking native tools
+ok 60 - pi URI guard allows normal local paths and OpenViking native tools
+  ---
+  duration_ms: 0.091125
+  type: 'test'
+  ...
+1..60
+# tests 60
+# suites 0
+# pass 60
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 389.269916

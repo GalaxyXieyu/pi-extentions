@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "candidateSchema": {
+    "required": ["kind", "scope", "summary", "confidence", "source"],
+    "kinds": ["profile", "preference", "project", "decision", "event", "experience", "workflow", "resource", "session"],
+    "scopes": ["user", "project", "workspace", "session", "global"]
+  },
+  "common": {
+    "writeWhen": [
+      "the user explicitly asks the agent to remember it",
+      "the fact changes future behavior and is stable beyond the current turn",
+      "the decision, failure, or result is complete and reusable"
+    ],
+    "neverWrite": [
+      "credentials, API keys, tokens, cookies, passwords, private keys, or auth headers",
+      "raw unbounded tool output, logs, web pages, or environment dumps",
+      "recall injection blocks or plugin status text",
+      "temporary drafts, speculative model claims, greetings, and low-value chatter"
+    ],
+    "dedup": "semantic candidate retrieval within the same scope, then skip/create/merge decision",
+    "conflict": "preserve source and time; mark superseded or needs-confirmation; never silently overwrite",
+    "recall": "filter scope and status first, rank by semantic relevance, then apply time decay and budget"
+  },
+  "purposes": {
+    "chat": {
+      "priority": ["profile", "preference", "event", "experience", "project", "resource"],
+      "quotas": { "profile": 2, "preference": 2, "event": 4, "experience": 2, "project": 1, "resource": 1 }
+    },
+    "coding": {
+      "priority": ["project", "decision", "workflow", "experience", "event", "preference", "resource"],
+      "quotas": { "project": 3, "decision": 3, "workflow": 2, "experience": 3, "event": 1, "preference": 1, "resource": 2 }
+    }
+  },
+  "kinds": {
+    "profile": { "scope": "user", "threshold": "explicit-or-repeated", "decay": "low" },
+    "preference": { "scope": "user", "threshold": "explicit-or-repeated", "decay": "low" },
+    "project": { "scope": "project", "threshold": "verified-source", "decay": "version-aware" },
+    "decision": { "scope": "project", "threshold": "confirmed-decision", "decay": "low-until-superseded" },
+    "event": { "scope": "session-or-project", "threshold": "completed-event", "decay": "time" },
+    "experience": { "scope": "project", "threshold": "root-cause-and-verification", "decay": "time" },
+    "workflow": { "scope": "project", "threshold": "repeated-or-confirmed", "decay": "version-aware" },
+    "resource": { "scope": "project-or-global", "threshold": "explicit-resource", "decay": "version-aware" },
+    "session": { "scope": "session", "threshold": "current-only", "decay": "none" }
+  },
+  "codingExtractionPrompt": "Extract only durable project facts, confirmed architecture decisions, safe commands, verified debugging experiences, reusable workflows, and cross-session blockers. Attach project scope and source evidence. Keep temporary task state in session memory. Never store secrets or raw tool output.",
+  "chatExtractionPrompt": "Extract only stable user profile/preferences and completed events or experiences that change future behavior. Require explicit confirmation or repeated evidence for profile updates. Never store secrets, speculative claims, or recall blocks."
+}

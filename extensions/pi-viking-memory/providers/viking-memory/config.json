@@ -1,0 +1,10 @@
+{
+  "enabled": true,
+  "syncTurns": true,
+  "recallTokenBudget": 4000,
+  "recallLimit": 10,
+  "minQueryLength": 2,
+  "captureMaxLength": 24000,
+  "captureAssistantTurns": true,
+  "logLevel": "error"
+}

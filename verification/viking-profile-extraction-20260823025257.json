@@ -1,0 +1,29 @@
+{
+  "operation": "live-profile-extraction",
+  "backend": "viking-memory",
+  "collection": "piAgent",
+  "project": "default",
+  "user": "user_01",
+  "assistant": "pi",
+  "marker": "PI_LIVE_PROFILE_TEST_20260823025257",
+  "profile_type": "profile_v1",
+  "write": {
+    "endpoint": "/api/memory/profile/add",
+    "code": 0,
+    "message": "success",
+    "request_id_present": true
+  },
+  "search": {
+    "endpoint": "/api/memory/search",
+    "code": 0,
+    "candidates": 4,
+    "marker_hits": 1,
+    "memory_type": "profile_v1",
+    "score": 0.2977464199066162,
+    "memory_info": {
+      "user_profile": "PI_LIVE_PROFILE_TEST_20260823025257 用户明确偏好：技术回答优先使用中文，结构清晰，先给结论再给命令。"
+    }
+  },
+  "result": "profile-extraction-passed",
+  "cleanup": "manual_console_cleanup_required_if_desired"
+}

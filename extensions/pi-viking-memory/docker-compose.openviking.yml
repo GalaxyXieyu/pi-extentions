@@ -1,0 +1,15 @@
+services:
+  openviking:
+    image: ghcr.io/volcengine/openviking:latest
+    container_name: pi-extentions-openviking
+    command: ["--without-bot"]
+    ports:
+      - "1933:1933"
+    volumes:
+      - ./../../.runtime/openviking:/app/.openviking
+    environment:
+      OPENVIKING_SERVER_PORT: "1933"
+      OPENVIKING_WITH_BOT: "0"
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?set OPENAI_API_KEY before starting}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:?set OPENAI_BASE_URL before starting}
+    restart: unless-stopped

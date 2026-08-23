@@ -2,6 +2,32 @@
 
 这是个人 Pi 插件与 harness 的汇总仓库。每个插件保持独立 Git 历史，通过 Git submodule 组合到这里，便于分别开发、发布和升级。
 
+## 记忆后端
+
+仓库提供统一的 Memory Provider 抽象，同时支持两种远端后端：
+
+| 后端 | 插件 | 适合场景 |
+| --- | --- | --- |
+| Viking Memory API | [`extensions/pi-viking-memory`](./extensions/pi-viking-memory) | 火山引擎远端长期记忆、用户画像、事件和会话抽取 |
+| OpenViking API | [`extensions/pi-viking-memory`](./extensions/pi-viking-memory) | OpenViking REST、`viking://` 资源、session commit 和 context takeover |
+
+两个插件可以同时安装，但同一 Pi 进程只激活一个主动写入后端：
+
+```bash
+export PI_MEMORY_BACKEND=viking-memory   # 或 openviking
+```
+
+公共契约和能力矩阵见 [`extensions/pi-viking-memory/core`](./extensions/pi-viking-memory/core)；抽取与召回模板见 [`extensions/pi-viking-memory/core/templates.md`](./extensions/pi-viking-memory/core/templates.md) 与 [`extensions/pi-viking-memory/core/memory-policy.json`](./extensions/pi-viking-memory/core/memory-policy.json)。设计依据、企业检索、生命周期、产品策略和本地 Docker 文档见 [`extensions/pi-viking-memory/docs`](./extensions/pi-viking-memory/docs)。
+
+切换后端后重启 Pi：
+
+```bash
+export PI_MEMORY_BACKEND=openviking   # 或 viking-memory
+pi
+```
+
+排障时使用 `/viking-memory` 或 `/viking` 查看状态；将 `VIKING_MEMORY_DEBUG_LOG` 或 `OV_DEBUG_LOG` 指向本地临时文件可打开脱敏调试日志。
+
 ## 子项目
 
 | 路径 | 项目 | 用途 |
@@ -23,6 +49,8 @@ git submodule update --init --recursive
 ```
 
 ## 日常维护
+
+记忆插件源码随汇总仓库维护；官方 OpenViking 示例的上游同步需要人工 review，避免覆盖本地 provider 接线和模板策略。更新任一插件后重新运行其测试、`pi install` 和 `pi list`。
 
 在子项目目录内开发和提交，子项目的提交由它自己的远端管理：
 
@@ -49,10 +77,32 @@ git submodule status
 
 ## Pi 安装
 
-`pi-agents-flow` 自带 Pi extension、skills 和 prompts 配置。开发时可直接从子项目 checkout 安装：
+安装编排插件：
 
 ```bash
 pi install ./extensions/pi-agents-flow
 ```
 
-具体使用方式、测试命令和发布说明见 [`extensions/pi-agents-flow/README.md`](./extensions/pi-agents-flow/README.md)。
+安装记忆插件时选择一个后端并设置对应凭证。
+
+Viking Memory：
+
+```bash
+export MEMORY_API_KEY='your-key'
+export VIKING_MEMORY_COLLECTION='piAgent'
+export VIKING_MEMORY_PROJECT='default'
+export VIKING_MEMORY_USER_ID='user_01'
+export VIKING_MEMORY_ASSISTANT_ID='pi'
+export PI_MEMORY_BACKEND=viking-memory
+pi install ./extensions/pi-viking-memory
+```
+
+OpenViking：
+
+```bash
+export PI_MEMORY_BACKEND=openviking
+pi install ./extensions/pi-viking-memory
+node ./extensions/pi-viking-memory/scripts/setup.mjs
+```
+
+具体使用方式、测试命令和发布说明见各插件 README。不要同时让两个后端主动 capture，避免双写和重复召回。

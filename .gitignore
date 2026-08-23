@@ -1,2 +1,4 @@
-# Local J-space runtime state
+# Local J-space, goal, and runtime state
 .jspace/
+.pi/
+.runtime/

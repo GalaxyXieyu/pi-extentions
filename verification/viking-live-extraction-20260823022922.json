@@ -1,0 +1,38 @@
+{
+  "operation": "live-memory-extraction",
+  "backend": "viking-memory",
+  "collection": "piAgent",
+  "project": "default",
+  "user": "user_01",
+  "assistant": "pi",
+  "marker": "PI_LIVE_MEMORY_TEST_20260823022922",
+  "session_id": "pi_live_extract_20260823022922",
+  "write": {
+    "endpoint": "/api/memory/session/add",
+    "code": 0,
+    "message": "success",
+    "request_id_present": true
+  },
+  "poll": {
+    "attempt": 1,
+    "search_code": 0,
+    "search_candidates": 2,
+    "marker_hits": 2,
+    "context_code": 0,
+    "context_marker_hit": false
+  },
+  "extracted": [
+    {
+      "memory_type": "event_v1",
+      "summary": "用户于2026年8月23日记录，本次线上collection测试完成后将通过语义搜索验证。"
+    },
+    {
+      "memory_type": "event_v1",
+      "summary": "用户于2026年8月23日明确告知，自己长期偏好简洁、直接、可执行的技术回答。"
+    }
+  ],
+  "result": "event-extraction-passed",
+  "profile_extraction": "not_proven_by_this_run",
+  "secrets_in_artifact": false,
+  "cleanup": "manual_console_cleanup_required_if_desired"
+}
