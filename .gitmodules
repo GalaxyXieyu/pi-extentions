@@ -1,0 +1,3 @@
+[submodule "extensions/pi-agents-flow"]
+	path = extensions/pi-agents-flow
+	url = https://github.com/GalaxyXieyu/pi-agents-flow.git
