@@ -1,3 +1,5 @@
+import type { MemoryRequestContext, MemoryRecord } from "./contracts.js";
+
 export type MemoryBackendId = "viking-memory" | "openviking";
 export type MemoryKind = "profile" | "preference" | "project" | "decision" | "event" | "experience" | "workflow" | "resource" | "session";
 
@@ -18,6 +20,7 @@ export interface MemoryMessage {
   content: string;
   time?: number;
   parts?: unknown[];
+  metadata?: { tenant_id?: string; user_id?: string; agent_id?: string; workspace_id?: string; policy_version?: number; request_id?: string };
 }
 
 export interface MemoryItem {
@@ -29,10 +32,12 @@ export interface MemoryItem {
   scope?: string;
   timestamp?: number | string;
   metadata?: Record<string, unknown>;
+  record?: Partial<MemoryRecord>;
 }
 
 export interface RecallRequest {
   query: string;
+  context?: MemoryRequestContext;
   sessionId?: string;
   purpose?: "chat" | "coding";
   maxChars?: number;
@@ -41,6 +46,7 @@ export interface RecallRequest {
 
 export interface RecallResult {
   backend: MemoryBackendId;
+  purpose?: "chat" | "coding";
   items: MemoryItem[];
   block: string | null;
   raw?: unknown;
@@ -48,11 +54,14 @@ export interface RecallResult {
 
 export interface CaptureResult {
   accepted: boolean;
+  rejected?: number;
+  candidates?: number;
   count: number;
   backend: MemoryBackendId;
   raw?: unknown;
   error?: string;
   delivered?: boolean;
+  decisions?: Array<{ decision: string; reason: string; kind?: string }>;
 }
 
 export interface MemoryProvider {
@@ -63,11 +72,11 @@ export interface MemoryProvider {
   replayPending?(): Promise<{ replayed: number; failed: number; skipped: number; deferred: number }>;
   probeCapabilities?(): Promise<{ backend: MemoryBackendId; capabilities: MemoryCapabilities; verified: boolean; unsupported: string[] }>;
   recall(request: RecallRequest): Promise<RecallResult>;
-  capture(sessionId: string, messages: MemoryMessage[]): Promise<CaptureResult>;
+  capture(sessionId: string, messages: MemoryMessage[], context?: MemoryRequestContext): Promise<CaptureResult>;
   commit?(sessionId: string): Promise<CaptureResult>;
-  search(query: string, options?: { limit?: number; kind?: MemoryKind | string }): Promise<MemoryItem[]>;
-  remember(content: string, options?: { kind?: MemoryKind | string; sessionId?: string }): Promise<CaptureResult>;
-  updateProfile(profile: string): Promise<CaptureResult>;
+  search(query: string, options?: { limit?: number; kind?: MemoryKind | string; context?: MemoryRequestContext }): Promise<MemoryItem[]>;
+  remember(content: string, options?: { kind?: MemoryKind | string; sessionId?: string; context?: MemoryRequestContext }): Promise<CaptureResult>;
+  updateProfile(profile: string, context?: MemoryRequestContext): Promise<CaptureResult>;
   capabilitiesSnapshot(): { backend: MemoryBackendId; capabilities: MemoryCapabilities };
   unsupported(operation: string): never;
 }

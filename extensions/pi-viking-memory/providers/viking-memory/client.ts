@@ -2,6 +2,7 @@ import type { VikingMemoryConfig } from "./config.js";
 import { sanitizeSensitiveText, sanitizeSensitiveValue } from "../../core/sensitive.mjs";
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { GLOBAL_MEMORY_GROUP } from "../../core/workspace-identity.js";
 
 export interface VikingResponse<T = unknown> {
   code?: number;
@@ -20,6 +21,18 @@ export interface VikingMessage {
   time?: number;
 }
 
+function mergeSearchData(...sources: Array<unknown>): Record<string, unknown> {
+  const merged: Record<string, unknown> = {};
+  for (const source of sources) {
+    if (!source || typeof source !== "object" || Array.isArray(source)) continue;
+    for (const [key, value] of Object.entries(source as Record<string, unknown>)) {
+      if (Array.isArray(value)) merged[key] = [...(Array.isArray(merged[key]) ? merged[key] as unknown[] : []), ...value];
+      else if (merged[key] === undefined) merged[key] = value;
+    }
+  }
+  return merged;
+}
+
 export class VikingMemoryClient {
   private readonly baseUrl: string;
   private readonly config: VikingMemoryConfig;
@@ -31,31 +44,35 @@ export class VikingMemoryClient {
     this.baseUrl = config.endpoint.replace(/\/+$/, "");
   }
 
-  async getContext(conversationId: string, query: string): Promise<VikingResponse<VikingContext> | null> {
+  async getContext(conversationId: string, query: string, options: { scoreThreshold?: number; timeDecayWeight?: number; noDecayPeriod?: number } = {}): Promise<VikingResponse<VikingContext> | null> {
     return this.post<VikingContext>("/api/memory/get_context", {
       collection_name: this.config.collectionName,
       project_name: this.config.projectName,
       conversation_id: conversationId,
       query,
       event_search_config: {
-        filter: this.filter(["event_v1"]),
+        filter: this.filter(["event_v1"], this.config.groupId),
         limit: this.config.recallLimit,
-        time_decay_config: { weight: 0.5, no_decay_period: 3 },
+        ...(typeof options.scoreThreshold === "number" ? { score_threshold: options.scoreThreshold } : {}),
+        time_decay_config: { weight: options.timeDecayWeight ?? 0.5, no_decay_period: options.noDecayPeriod ?? 3 },
       },
       profile_search_config: {
-        filter: this.filter(["profile_v1"]),
+        // User preferences are deliberately global so they travel with the user.
+        filter: this.filter(["profile_v1"], GLOBAL_MEMORY_GROUP),
         limit: 1,
       },
     });
   }
 
-  async addSession(sessionId: string, messages: VikingMessage[]): Promise<VikingResponse | null> {
+  async addSession(sessionId: string, messages: VikingMessage[], options?: { ttlRelativeSeconds?: number; ttlAbsoluteMs?: number }): Promise<VikingResponse | null> {
     if (messages.length === 0) return null;
     return this.post("/api/memory/session/add", {
       collection_name: this.config.collectionName,
       project_name: this.config.projectName,
       session_id: sessionId,
       messages,
+      ...(options?.ttlRelativeSeconds ? { ttl_relative: options.ttlRelativeSeconds } : {}),
+      ...(options?.ttlAbsoluteMs ? { ttl_absolute: options.ttlAbsoluteMs } : {}),
       metadata: {
         default_user_id: this.config.userId,
         default_assistant_id: this.config.assistantId,
@@ -66,12 +83,29 @@ export class VikingMemoryClient {
   }
 
   async search(query: string, limit = this.config.recallLimit): Promise<VikingResponse | null> {
+    // Manual search mirrors automatic recall: current-project events plus
+    // user-global profiles, never another project's event stream.
+    const [events, profiles] = await Promise.all([
+      this.searchGroup(query, limit, ["event_v1"], this.config.groupId),
+      this.searchGroup(query, limit, ["profile_v1"], GLOBAL_MEMORY_GROUP),
+    ]);
+    if (!events && !profiles) return null;
+    if (events?.code !== 0 && profiles?.code !== 0) return events || profiles;
+    return {
+      code: 0,
+      message: "success",
+      request_id: events?.request_id || profiles?.request_id,
+      data: mergeSearchData(events?.data, profiles?.data),
+    };
+  }
+
+  private async searchGroup(query: string, limit: number, memoryType: string[], groupId: string): Promise<VikingResponse | null> {
     return this.post("/api/memory/search", {
       collection_name: this.config.collectionName,
       project_name: this.config.projectName,
       query,
       limit,
-      filter: this.filter(["event_v1", "profile_v1"]),
+      filter: this.filter(memoryType, groupId),
     });
   }
 
@@ -85,6 +119,32 @@ export class VikingMemoryClient {
       assistant_id: this.config.assistantId,
       ...(sessionId ? { session_id: sessionId } : {}),
       ...(this.config.groupId ? { group_id: this.config.groupId } : {}),
+    });
+  }
+
+  async updateEvent(eventId: string, summary: string): Promise<VikingResponse | null> {
+    return this.post("/api/memory/event/update", {
+      collection_name: this.config.collectionName,
+      project_name: this.config.projectName,
+      event_id: eventId,
+      event_type: "event_v1",
+      memory_info: { summary },
+      user_id: this.config.userId,
+      assistant_id: this.config.assistantId,
+      ...(this.config.groupId ? { group_id: this.config.groupId } : {}),
+    });
+  }
+
+  async updateProfile(profileId: string, userProfile: string): Promise<VikingResponse | null> {
+    return this.post("/api/memory/profile/update", {
+      collection_name: this.config.collectionName,
+      project_name: this.config.projectName,
+      profile_id: profileId,
+      profile_type: "profile_v1",
+      memory_info: { user_profile: userProfile },
+      user_id: this.config.userId,
+      assistant_id: this.config.assistantId,
+      group_id: GLOBAL_MEMORY_GROUP,
     });
   }
 
@@ -104,7 +164,7 @@ export class VikingMemoryClient {
       user_id: this.config.userId,
       assistant_id: this.config.assistantId,
       is_upsert: true,
-      ...(this.config.groupId ? { group_id: this.config.groupId } : {}),
+      group_id: GLOBAL_MEMORY_GROUP,
     });
   }
 
@@ -114,12 +174,12 @@ export class VikingMemoryClient {
     return this.connected;
   }
 
-  private filter(memoryType: string[]): Record<string, unknown> {
+  private filter(memoryType: string[], groupId = this.config.groupId): Record<string, unknown> {
     return {
       user_id: this.config.userId,
       assistant_id: this.config.assistantId,
       memory_type: memoryType,
-      ...(this.config.groupId ? { group_id: this.config.groupId } : {}),
+      ...(groupId ? { group_id: groupId } : {}),
     };
   }
 

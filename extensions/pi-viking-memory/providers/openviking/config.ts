@@ -2,7 +2,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildUserAgent, resolveOpenVikingCredentials } from "./shared/credentials.mjs";
-import { resolveEffectivePeerId } from "./shared/workspace-peer.mjs";
+import { resolveWorkspaceIdentity } from "../../core/workspace-identity.js";
 
 /** Hand-maintained: this extension ships no manifest to read a version from. */
 export const EXTENSION_VERSION = "0.1.0";
@@ -166,7 +166,11 @@ export function loadConfig(extensionDir: string): OVConfig {
   config.recallPeerScope = config.recallPeerScope === "actor" ? "actor" : "all";
   config.recallQueryExpansion = config.recallQueryExpansion === "off" ? "off" : "auto";
   if (!Array.isArray(config.bypassPatterns)) config.bypassPatterns = [];
-  config.peerId = resolveEffectivePeerId({ cfg: config as any, cwd: process.cwd() }).peerId;
+  // Keep the same cross-device workspace identity model as Viking Memory:
+  // explicit override first, then Git origin, then an isolated cwd fallback.
+  config.peerId = config.workspacePeer
+    ? resolveWorkspaceIdentity({ cwd: process.cwd(), explicitId: config.peerId }).id
+    : String(config.peerId || "").trim();
   return config;
 }
 

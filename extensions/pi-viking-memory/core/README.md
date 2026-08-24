@@ -37,6 +37,12 @@
 
 两个插件可以共存于仓库，但不要在同一个 Pi 配置中同时启用自动 capture。
 
+## 运行时策略
+
+`memory-policy.json` 不只是文档：`policy-engine.ts` 会在召回格式化前按 purpose、kind priority、quota、status、confidence 和 valid_until 过滤排序。`candidate-extractor.ts` 会在 remember/profile/capture 路径识别纠正、故障、决策和项目候选；高风险 secret/threat candidate 会拒绝。
+
+当前 canonical config、identity 和生命周期是本地控制层。外部登录、后台配置 API 和企业 ACL 只预留接口，尚未接入具体产品。
+
 ## 调试与维护
 
 - `PI_MEMORY_BACKEND` 未设置或值不合法时，两个插件都不主动读写。

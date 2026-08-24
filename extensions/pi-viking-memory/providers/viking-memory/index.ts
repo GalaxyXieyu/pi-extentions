@@ -8,10 +8,30 @@ import { injectRecall } from "../../core/format.js";
 import { isSelected } from "../../core/selection.js";
 import { VikingMemoryProvider } from "./provider.js";
 import { registerTools } from "./tools.js";
+import { memoryStats, measure } from "../../core/runtime.js";
+import { loadCanonicalConfig } from "../../core/config-protocol.js";
+import { localIdentity, requestContext, resolverFromEnv, type MemoryRequestContext } from "../../core/contracts.js";
+import { auditReceipt, recentAuditRecords } from "../../core/runtime.js";
+import { resolveWorkspaceIdentity } from "../../core/workspace-identity.js";
 
 export default async function (pi: ExtensionAPI) {
   const config = loadConfigFromModuleUrl(import.meta.url);
   if (!config.enabled || !isSelected("viking-memory")) return;
+  const canonical = loadCanonicalConfig();
+  if (!canonical.valid) return;
+  config.recallLimit = canonical.config.retrieval.limit;
+  config.recallTokenBudget = canonical.config.retrieval.maxChars;
+  config.minQueryLength = canonical.config.retrieval.minQueryLength;
+  config.syncTurns = canonical.config.capture.enabled;
+  config.captureAssistantTurns = canonical.config.capture.assistantTurns;
+  config.captureMaxLength = canonical.config.capture.maxLength;
+
+  // One optional override is enough: PI_MEMORY_WORKSPACE_ID. Otherwise derive
+  // a stable ID from Git origin so clones on different machines share a project.
+  const workspace = resolveWorkspaceIdentity({
+    explicitId: process.env.PI_MEMORY_WORKSPACE_ID || process.env.MEMORY_WORKSPACE_ID || config.groupId,
+  });
+  config.groupId = workspace.id;
 
   const client = new VikingMemoryClient(config);
   const provider = new VikingMemoryProvider(client, config);
@@ -24,19 +44,39 @@ export default async function (pi: ExtensionAPI) {
   let pendingPrompt = "";
   let recallBlock: string | null = null;
   let toolsRegistered = false;
+  const resolver = resolverFromEnv();
+  let identity = localIdentity({ userId: config.userId, agentId: config.assistantId, workspaceId: config.groupId });
+  const requestContextValue: MemoryRequestContext = requestContext(identity, { purpose: canonical.config.retrieval.purpose || "coding", policyVersion: canonical.config.policyVersion, configRevision: canonical.config.revision, lifecycle: { expiryEnabled: canonical.config.lifecycle.expiryEnabled, conflictPolicy: canonical.config.lifecycle.conflictPolicy } });
 
   const start = async (ctx: any): Promise<void> => {
     if (started) return;
     if (startPromise) return startPromise;
     startPromise = (async () => {
       conversationId = normalizeId(ctx?.sessionManager?.getSessionId?.() || `pi_${Date.now()}`);
+      const resolved = await resolver.resolve({ piSessionId: conversationId, cwd: process.cwd(), env: process.env });
+      if (!resolved) throw new Error("memory identity resolver returned no identity");
+      identity = { ...resolved, workspaceId: config.groupId };
+      requestContextValue.identity = identity;
+      identity.sessionId = conversationId;
+      requestContextValue.identity.sessionId = conversationId;
       connected = await client.health();
       if (!connected) {
         log("remote Viking Memory is not reachable or credentials are invalid");
         return;
       }
       if (!toolsRegistered) {
-        registerTools(pi, provider, config, () => conversationId);
+        registerTools(
+          pi,
+          provider,
+          config,
+          () => conversationId,
+          () => requestContextValue,
+          canonical.config.ui.cards.enabled ? {
+            hint: canonical.config.ui.cards.hint,
+            partialPrefix: canonical.config.ui.cards.partialPrefix,
+            maxSummary: canonical.config.ui.cards.maxSummary,
+          } : undefined,
+        );
         toolsRegistered = true;
       }
       setStatus(ctx, connected, config, syncedEntryCount);
@@ -57,13 +97,14 @@ export default async function (pi: ExtensionAPI) {
     if (!connected || pendingPrompt.trim().length < config.minQueryLength) return;
     const query = pendingPrompt;
     pendingPrompt = "";
-    const result = await provider.recall({
+    const result = await measure("recall", provider.id, () => provider.recall({
       query,
       sessionId: conversationId,
       purpose: "coding",
       limit: config.recallLimit,
       maxChars: config.recallTokenBudget * 4,
-    });
+      context: requestContextValue,
+    }));
     if (!result.raw || (result.raw as any)?.code !== 0) {
       log(`get_context failed: ${(result.raw as any)?.message || "no response"}`);
       return;
@@ -81,7 +122,8 @@ export default async function (pi: ExtensionAPI) {
       syncedEntryCount = extracted.nextEntryCount;
       return;
     }
-    const result = await provider.capture(conversationId, extracted.messages);
+    const result = await measure("capture", provider.id, () => provider.capture(conversationId, extracted.messages, requestContextValue));
+    memoryStats.record({ type: "extraction", backend: provider.id, operation: "turn_end", count: result.count });
     if (!result.accepted) {
       log(`session/add failed: ${result.error || "no response"}`);
       return;
@@ -95,7 +137,8 @@ export default async function (pi: ExtensionAPI) {
     if (!connected || !config.syncTurns) return;
     const extracted = extractMessages(ctx?.sessionManager?.getBranch?.() || [], syncedEntryCount, config);
     if (extracted.messages.length === 0) return;
-    const result = await provider.capture(`${conversationId}_shutdown`, extracted.messages);
+    const result = await measure("capture", provider.id, () => provider.capture(`${conversationId}_shutdown`, extracted.messages, requestContextValue));
+    memoryStats.record({ type: "extraction", backend: provider.id, operation: "shutdown", count: result.count });
     if (!result.accepted) log(`shutdown session/add failed: ${result.error || "no response"}`);
     else syncedEntryCount = extracted.nextEntryCount;
   });
@@ -104,16 +147,22 @@ export default async function (pi: ExtensionAPI) {
 
   pi.registerCommand("viking-memory-capabilities", {
     description: "Show the active memory backend capabilities.",
-    handler: async (_args: string, ctx: any) => {
-      ctx.ui.notify(JSON.stringify(provider.capabilitiesSnapshot()), "info");
-    },
+    handler: async (_args: string, ctx: any) => { ctx.ui.notify(JSON.stringify(provider.capabilitiesSnapshot()), "info"); },
+  });
+  pi.registerCommand("viking-memory-stats", {
+    description: "Show local memory operation statistics.",
+    handler: async (_args: string, ctx: any) => { ctx.ui.notify(JSON.stringify(memoryStats.snapshot()), "info"); },
+  });
+  pi.registerCommand("viking-memory-audit", {
+    description: "Show a redacted session audit summary.",
+    handler: async (_args: string, ctx: any) => { ctx.ui.notify(auditReceipt(conversationId, requestContextValue.identity, recentAuditRecords(conversationId)), "info"); },
   });
 
   pi.registerCommand("viking-memory", {
     description: "Remote Viking Memory status; use 'search <query>' to search memories.",
     handler: async (args: string, ctx: any) => {
       if (args.trim().startsWith("search ")) {
-        const items = await provider.search(args.trim().slice(7), { limit: config.recallLimit });
+        const items = await provider.search(args.trim().slice(7), { limit: config.recallLimit, context: requestContextValue });
         ctx.ui.notify(items.length ? JSON.stringify(items) : "No results found.", "info");
         return;
       }

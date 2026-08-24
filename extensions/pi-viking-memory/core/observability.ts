@@ -1,5 +1,7 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { localMemoryStatePath } from "./local-paths.js";
 import { sanitizeSensitiveValue } from "./sensitive.mjs";
 
 export type MemoryEventType = "extraction" | "recall" | "write" | "error";
@@ -40,12 +42,19 @@ export interface StatsProvider {
 
 export class FileStatsProvider implements StatsProvider {
   private events: MemoryEvent[] = [];
-  constructor(private readonly filePath = process.env.PI_MEMORY_STATS_FILE || "") {}
+  private readonly filePath: string;
+  constructor(filePath = process.env.PI_MEMORY_STATS_FILE || localMemoryStatePath("events.jsonl")) { this.filePath = filePath; this.load(); }
+
+  private load(): void {
+    if (!existsSync(this.filePath)) return;
+    try {
+      for (const line of readFileSync(this.filePath, "utf8").split("\n")) if (line.trim()) this.events.push(JSON.parse(line));
+    } catch { /* malformed historical metrics never block runtime; new events still append */ }
+  }
 
   record(event: Omit<MemoryEvent, "timestamp">): void {
     const next = { ...event, timestamp: new Date().toISOString() };
     this.events.push(next);
-    if (!this.filePath) return;
     try {
       mkdirSync(dirname(this.filePath), { recursive: true });
       appendFileSync(this.filePath, JSON.stringify(sanitizeSensitiveValue(next)) + "\n");
@@ -66,6 +75,9 @@ export class FileStatsProvider implements StatsProvider {
   }
 
   audit(sessionId: string, records: MemoryRecord[]): string {
-    return JSON.stringify({ sessionId, generatedAt: new Date().toISOString(), records: sanitizeSensitiveValue(records) }, null, 2);
+    const receipt = JSON.stringify({ sessionId, generatedAt: new Date().toISOString(), records: sanitizeSensitiveValue(records) }, null, 2);
+    const file = process.env.PI_MEMORY_AUDIT_FILE || localMemoryStatePath("audit.jsonl");
+    try { mkdirSync(dirname(file), { recursive: true }); appendFileSync(file, receipt + "\n"); } catch { /* audit must not affect memory */ }
+    return receipt;
   }
 }

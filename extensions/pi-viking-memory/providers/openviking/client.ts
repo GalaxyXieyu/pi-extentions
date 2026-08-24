@@ -248,13 +248,14 @@ export class OVClient {
   get isConnected(): boolean { return this.connected; }
 
   /** POST /api/v1/search/search — context-aware retrieval with server-side budgeting. */
-  async searchContext(query: string, opts?: { sessionId?: string; maxTokens?: number; purpose?: "chat" | "coding"; limit?: number }): Promise<any | null> {
+  async searchContext(query: string, opts?: { sessionId?: string; maxTokens?: number; purpose?: "chat" | "coding"; limit?: number; queryExpansion?: "auto" | "off"; scoreThreshold?: number }): Promise<any | null> {
     const body: Record<string, unknown> = {
       query,
       mode: "context",
       max_tokens: opts?.maxTokens ?? 1600,
       purpose: opts?.purpose ?? "coding",
-      ...(opts?.sessionId ? { session_id: opts.sessionId, query_expansion: "auto", dedup_turns: 5 } : {}),
+      ...(opts?.sessionId ? { session_id: opts.sessionId, query_expansion: opts?.queryExpansion ?? "auto", dedup_turns: 5 } : {}),
+      ...(typeof opts?.scoreThreshold === "number" ? { score_threshold: opts.scoreThreshold } : {}),
       ...(opts?.limit ? { limit: opts.limit } : {}),
     };
     const res = await this.fetchJSON<any>("/api/v1/search/search", {
@@ -334,7 +335,17 @@ export class OVClient {
     return res.ok ? res.result : null;
   }
 
-  // ========== Filesystem ==========
+  /** POST /api/v1/content/write — update a memory/resource file and refresh indexes. */
+  async writeContent(uri: string, content: string, options: { mode?: "replace" | "append" | "create"; wait?: boolean } = {}): Promise<{ uri?: string; root_uri?: string } | null> {
+    const res = await this.fetchJSON<{ uri?: string; root_uri?: string }>(
+      "/api/v1/content/write",
+      { method: "POST", body: JSON.stringify({ uri, content, mode: options.mode ?? "replace", wait: options.wait ?? true }) },
+      30000,
+    );
+    return res.ok ? res.result : null;
+  }
+
+  // ========== Filesystem ===========
 
   /** GET /api/v1/fs/ls — list directory */
   async ls(uri: string): Promise<OVDirEntry[]> {

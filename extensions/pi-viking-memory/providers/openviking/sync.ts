@@ -8,6 +8,7 @@ import { enqueue, listPending, replayPending } from "./shared/pending-queue.mjs"
 import { extractBranchCapturePayloads } from "./lib/capture-adapter.mjs";
 import { countUndeliveredForSession, estimatePayloadTokens } from "./lib/takeover-core.mjs";
 import { sanitizeSensitiveText, sanitizeSensitiveValue } from "../../core/sensitive.mjs";
+import type { MemoryRequestContext } from "../../core/contracts.js";
 
 // --- SyncManager ---
 
@@ -118,7 +119,7 @@ export class SyncManager {
     return countUndeliveredForSession(pending, this.ovSessionId) === 0;
   }
 
-  async syncBranch(branch: any[]): Promise<SyncBranchResult> {
+  async syncBranch(branch: any[], context?: MemoryRequestContext): Promise<SyncBranchResult> {
     if (!this.ovSessionId) return { added: 0, tokens: 0, allDelivered: true };
 
     const extracted = extractBranchCapturePayloads(branch, this.syncedEntryCount, this.config);
@@ -128,8 +129,8 @@ export class SyncManager {
       content: typeof payload.content === "string" ? payload.content : "",
       parts: Array.isArray(payload.parts) ? payload.parts : undefined,
     }));
-    const captured = await this.provider.capture(this.ovSessionId, messages);
-    const added = captured.accepted ? messages.length : captured.count;
+    const captured = await this.provider.capture(this.ovSessionId, messages, context);
+    const added = captured.count;
     const tokens = extracted.payloads.slice(0, added).reduce((sum, payload) => sum + estimatePayloadTokens(payload), 0);
     const allDelivered = captured.accepted && captured.delivered !== false;
     if (captured.accepted) this.syncedEntryCount = extracted.nextEntryCount;

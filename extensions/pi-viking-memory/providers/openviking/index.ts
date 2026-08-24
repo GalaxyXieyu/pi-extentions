@@ -23,11 +23,27 @@ import { isSelected } from "../../core/selection.js";
 import { OpenVikingProvider } from "./provider.js";
 import { injectRecall } from "../../core/format.js";
 import { sanitizeSensitiveText } from "../../core/sensitive.mjs";
+import { memoryStats, measure } from "../../core/runtime.js";
+import { loadCanonicalConfig } from "../../core/config-protocol.js";
+import { localIdentity, requestContext, resolverFromEnv, type MemoryRequestContext } from "../../core/contracts.js";
+import { auditReceipt, recentAuditRecords } from "../../core/runtime.js";
 
 export default async function (pi: ExtensionAPI) {
   // --- Load config ---
   const config = loadConfigFromModuleUrl(import.meta.url);
   if (!config.enabled || !isSelected("openviking")) return;
+  const canonical = loadCanonicalConfig();
+  if (!canonical.valid) return;
+  config.recallLimit = canonical.config.retrieval.limit;
+  config.recallTokenBudget = canonical.config.retrieval.maxChars;
+  config.minQueryLength = canonical.config.retrieval.minQueryLength;
+  config.syncTurns = canonical.config.capture.enabled;
+  config.captureAssistantTurns = canonical.config.capture.assistantTurns;
+  config.captureMaxLength = canonical.config.capture.maxLength;
+  config.captureToolResults = canonical.config.capture.toolResults;
+  config.scoreThreshold = canonical.config.retrieval.scoreThreshold ?? config.scoreThreshold;
+  config.recallQueryExpansion = canonical.config.retrieval.queryExpansion ? "auto" : "off";
+  config.takeoverEnabled = canonical.config.lifecycle.consolidationEnabled ? config.takeoverEnabled : false;
 
   // Env overrides
 
@@ -58,6 +74,9 @@ export default async function (pi: ExtensionAPI) {
   let startPromise: Promise<void> | null = null;
   let pendingPrompt = "";
   let recallBlock: string | null = null;
+  const resolver = resolverFromEnv();
+  let identity = localIdentity({ userId: config.user || "pi", tenantId: config.account || "local", agentId: "pi", workspaceId: config.peerId || "local" });
+  const requestContextValue: MemoryRequestContext = requestContext(identity, { purpose: canonical.config.retrieval.purpose || "coding", policyVersion: canonical.config.policyVersion, configRevision: canonical.config.revision, lifecycle: { expiryEnabled: canonical.config.lifecycle.expiryEnabled, conflictPolicy: canonical.config.lifecycle.conflictPolicy } });
 
   // ================================================================
   // Event Handlers
@@ -90,6 +109,12 @@ export default async function (pi: ExtensionAPI) {
 
       // Ensure OV session
       const piSessionId = ctx.sessionManager.getSessionId();
+      const resolved = await resolver.resolve({ piSessionId, cwd: process.cwd(), env: process.env });
+      if (!resolved) throw new Error("memory identity resolver returned no identity");
+      identity = resolved;
+      requestContextValue.identity = identity;
+      identity.sessionId = piSessionId;
+      requestContextValue.identity.sessionId = piSessionId;
       const ok = await sync.ensureSession(piSessionId);
       if (!ok) {
         if (config.logLevel !== "silent") {
@@ -115,7 +140,18 @@ export default async function (pi: ExtensionAPI) {
 
       // Register tools (also needed for pi -c continuations).
       if (!toolsRegistered) {
-        registerTools(pi, client, sync, provider);
+        registerTools(
+          pi,
+          client,
+          sync,
+          provider,
+          () => requestContextValue,
+          canonical.config.ui.cards.enabled ? {
+            hint: canonical.config.ui.cards.hint,
+            partialPrefix: canonical.config.ui.cards.partialPrefix,
+            maxSummary: canonical.config.ui.cards.maxSummary,
+          } : undefined,
+        );
         toolsRegistered = true;
       }
       updateStatus(ctx, connected, 0, sync.sessionId, config, takeover.state);
@@ -168,13 +204,14 @@ export default async function (pi: ExtensionAPI) {
     if (!connected || bypassed) return;
 
     if (pendingPrompt.trim().length > 1) {
-      const result = await provider.recall({
+      const result = await measure("recall", provider.id, () => provider.recall({
         query: pendingPrompt,
         sessionId: sync.sessionId || undefined,
         purpose: "coding",
         limit: config.recallLimit,
         maxChars: config.recallTokenBudget * 4,
-      });
+        context: requestContextValue,
+      }));
       recallBlock = result.block;
       pendingPrompt = "";
     }
@@ -197,7 +234,8 @@ export default async function (pi: ExtensionAPI) {
     if (!connected || bypassed || !config.syncTurns) return;
 
     const branch = ctx.sessionManager.getBranch();
-    const result = await sync.syncBranch(branch);
+    const result = await measure("capture", provider.id, () => sync.syncBranch(branch, requestContextValue));
+    memoryStats.record({ type: "extraction", backend: provider.id, operation: "turn_end", count: result.added });
     debugLog(`turn_end: synced ${result.added} entries, ~${result.tokens} tokens`);
     await takeover.onTurnSynced(result.tokens);
     updateStatus(ctx, connected, result.added, sync.sessionId, config, takeover.state);
@@ -251,9 +289,16 @@ export default async function (pi: ExtensionAPI) {
 
   pi.registerCommand("viking-capabilities", {
     description: "Show the active OpenViking provider capabilities.",
-    handler: async (_args, ctx) => {
-      ctx.ui.notify(JSON.stringify(provider.capabilitiesSnapshot()), "info");
-    },
+    handler: async (_args, ctx) => { ctx.ui.notify(JSON.stringify(provider.capabilitiesSnapshot()), "info"); },
+  });
+  pi.registerCommand("viking-memory-stats", {
+    description: "Show local memory operation statistics.",
+    handler: async (_args, ctx) => { ctx.ui.notify(JSON.stringify(memoryStats.snapshot()), "info"); },
+  });
+
+  pi.registerCommand("viking-memory-audit", {
+    description: "Show a redacted session audit summary.",
+    handler: async (_args, ctx) => { ctx.ui.notify(auditReceipt(sync.sessionId || "none", requestContextValue.identity, recentAuditRecords(sync.sessionId || "none")), "info"); },
   });
 
   pi.registerCommand("viking", {

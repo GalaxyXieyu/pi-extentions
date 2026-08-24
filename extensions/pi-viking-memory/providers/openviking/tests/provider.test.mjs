@@ -32,7 +32,9 @@ function mockFetch() {
     calls.push({ url, init, body });
     const result = url.endsWith("/search/search")
       ? { memories: [{ uri: "viking://~/memories/project.md", context_type: "memory", score: 0.91, abstract: "Project uses TypeScript", level: 0, category: "project", match_reason: "semantic" }], resources: [], skills: [], total: 1 }
-      : url.includes("/commit")
+      : url.includes("/content/write")
+        ? { uri: "viking://~/memories/project.md", root_uri: "viking://~/memories" }
+        : url.includes("/commit")
         ? { task_id: "task-1", archive_uri: "viking://~/sessions/pi/history/archive_1" }
         : {};
     return new Response(JSON.stringify({ status: "ok", result }), { status: 200 });
@@ -62,6 +64,8 @@ test("OpenViking provider uses real search, message, and commit HTTP contracts",
     const committed = await provider.commit("pi_session");
     assert.equal(committed.accepted, true);
     const remembered = await provider.remember("remember this decision", { sessionId: "pi_session" });
+    const write = await new OVClient(config).writeContent("viking://~/memories/project.md", "updated", { mode: "replace", wait: true });
+    assert.equal(write?.uri, "viking://~/memories/project.md");
     assert.equal(remembered.accepted, true);
     assert.equal(mock.calls[0].url, "https://example.invalid/api/v1/search/search");
     assert.deepEqual(mock.calls[0].body, { query: "typescript", mode: "context", max_tokens: 1600, purpose: "coding", limit: 5 });
@@ -71,6 +75,8 @@ test("OpenViking provider uses real search, message, and commit HTTP contracts",
     assert.deepEqual(mock.calls[2].body, { keep_recent_count: 10 });
     assert.equal(mock.calls[3].url, "https://example.invalid/api/v1/sessions/pi_session/messages");
     assert.deepEqual(mock.calls[3].body, { role: "user", content: "[Remember] remember this decision" });
+    assert.equal(mock.calls[4].url, "https://example.invalid/api/v1/content/write");
+    assert.deepEqual(mock.calls[4].body, { uri: "viking://~/memories/project.md", content: "updated", mode: "replace", wait: true });
   } finally { mock.restore(); }
 });
 

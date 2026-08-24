@@ -2,6 +2,7 @@ import type { VikingMemoryConfig } from "./config.js";
 import type { VikingMessage } from "./client.js";
 import { stripMemoryContext } from "../../core/format.js";
 import { sanitizeSensitiveText } from "../../core/sensitive.mjs";
+import { scanMemoryContent } from "../../core/content-scanner.js";
 
 export interface CaptureResult {
   messages: VikingMessage[];
@@ -22,8 +23,11 @@ export function extractMessages(branch: unknown[], syncedEntryCount: number, con
     if (!payload || !role || (role === "assistant" && !config.captureAssistantTurns)) continue;
 
     const text = cleanText(extractText(payload));
-    if (!text || text.startsWith("/viking-memory") || text.startsWith("[Viking Memory]")) continue;
-    messages.push({ role, content: truncate(text, config.captureMaxLength), time: Date.now() });
+    const scan = scanMemoryContent(text);
+    if (scan.action === "reject" || scan.action === "threat") continue;
+    const safeText = scan.text;
+    if (!safeText || safeText.startsWith("/viking-memory") || safeText.startsWith("[Viking Memory]")) continue;
+    messages.push({ role, content: truncate(safeText, config.captureMaxLength), time: Date.now() });
   }
 
   return { messages, nextEntryCount: entries.length, resetWatermark };

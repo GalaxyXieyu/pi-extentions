@@ -1,0 +1,28 @@
+# Defense in depth: package.json "files" is the primary allowlist.
+# These rules ensure secrets, local state, tests and verification artifacts
+# cannot be published if the allowlist changes later.
+
+.env
+.env.*
+*.key
+*.pem
+*.p12
+*.pfx
+*.crt
+*.log
+
+.runtime/
+node_modules/
+coverage/
+verification/
+tests/
+**/tests/
+
+*.jsonl
+lifecycle.json
+audit.jsonl
+events.jsonl
+
+.jspace/
+.pi/
+.DS_Store

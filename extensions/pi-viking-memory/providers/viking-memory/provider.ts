@@ -4,6 +4,10 @@ import type { VikingMemoryClient, VikingResponse } from "./client.js";
 import type { VikingMemoryConfig } from "./config.js";
 import { buildRecallBlock } from "./recall.js";
 import { sanitizeSensitiveText } from "../../core/sensitive.mjs";
+import { extractCandidates } from "../../core/candidate-extractor.js";
+import { localIdentity } from "../../core/contracts.js";
+import { authorize, filterRecall, gateCapture, persistLifecycleRecord, persistLifecycleTransition, backfillLifecycleRemoteId } from "../../core/runtime.js";
+import type { MemoryRequestContext, MemoryRecord } from "../../core/contracts.js";
 
 export class VikingMemoryProvider implements MemoryProvider {
   readonly id = "viking-memory" as const;
@@ -35,39 +39,146 @@ export class VikingMemoryProvider implements MemoryProvider {
   }
 
   async recall(request: RecallRequest): Promise<RecallResult> {
-    const response = await this.client.getContext(request.sessionId || `pi_${Date.now()}`, request.query);
+    const response = await this.client.getContext(request.sessionId || `pi_${Date.now()}`, request.query, { scoreThreshold: this.config.scoreThreshold });
     if (!response || response.code !== 0) return { backend: this.id, items: [], block: null, raw: response };
     const context = response.data ?? null;
-    const items = contextItems(context);
+    const items = contextItems(context, request.context?.identity.userId || this.config.userId, request.context?.identity.workspaceId || this.config.groupId, request.context?.identity.tenantId || "local");
+    const filtered = request.context ? filterRecall(items, request.context) : { items, dropped: 0 };
     return {
       backend: this.id,
-      items,
-      block: formatRecall({ backend: this.id, items, maxChars: request.maxChars }),
+      purpose: request.purpose || "coding",
+      items: filtered.items,
+      block: formatRecall({ backend: this.id, items: filtered.items, maxChars: request.maxChars, purpose: request.purpose || "coding" } as any),
       raw: response,
     };
   }
 
-  async capture(sessionId: string, messages: import("../../core/provider.js").MemoryMessage[]): Promise<CaptureResult> {
-    const response = await this.client.addSession(`${sessionId}_${Date.now()}`, messages);
-    return responseResult(this.id, response, messages.length);
+  async capture(sessionId: string, messages: import("../../core/provider.js").MemoryMessage[], context?: MemoryRequestContext): Promise<CaptureResult> {
+    const decisions: Array<{ decision: string; reason: string; kind?: string }> = [];
+    const sessionMessages: import("../../core/provider.js").MemoryMessage[] = [];
+    const createdCandidates: Array<import("../../core/contracts.js").MemoryRecord> = [];
+    let rejected = 0;
+    let lifecycleWrites = 0;
+
+    for (const message of messages) {
+      if (!context) {
+        sessionMessages.push(message);
+        continue;
+      }
+      const gate = await gateCapture(message.content, context.identity, context, async (query) => {
+        const response = await this.client.search(query, this.config.recallLimit);
+        const items = response?.code === 0 ? contextItems(response.data, context.identity.userId, context.identity.workspaceId || this.config.groupId, context.identity.tenantId) : [];
+        return filterRecall(items, context).items;
+      });
+      const decision = gate.lifecycle?.decision || "capture-only";
+      if (decision === "create" && gate.extraction.candidates[0]) createdCandidates.push(gate.extraction.candidates[0] as unknown as import("../../core/contracts.js").MemoryRecord);
+      decisions.push({ decision, reason: gate.reason, kind: gate.extraction.candidates[0]?.kind });
+
+      if (!gate.allowed && gate.writeMode !== "lifecycle-action") {
+        rejected++;
+        continue;
+      }
+
+      if (gate.writeMode === "session" && decision === "create" && gate.extraction.candidates[0]) {
+        const candidate = gate.extraction.candidates[0] as unknown as import("../../core/contracts.js").MemoryRecord;
+        const summary = candidate.summary || sanitizeSensitiveText(message.content);
+        const response = isGlobalPreference(candidate.kind)
+          ? await this.client.addProfile(sanitizeSensitiveText(summary))
+          : await this.client.addEvent(sanitizeSensitiveText(summary), sessionId);
+        if (response?.code === 0) {
+          const remoteId = response?.data?.event_id || response?.data?.profile_id || response?.data?.id;
+          if (remoteId) persistLifecycleRecord({ ...candidate, status: "active" as const }, remoteId, "remote-create");
+          lifecycleWrites++;
+          continue;
+        }
+        // fall through to session path when the durable write is not supported
+        sessionMessages.push({ ...message, metadata: { ...(message.metadata || {}), tenant_id: context.identity.tenantId, user_id: context.identity.userId, assistant_id: context.identity.agentId, workspace_id: context.identity.workspaceId, policy_version: context.policyVersion, request_id: context.requestId, lifecycle_decision: decision } });
+        continue;
+      }
+
+      if (gate.writeMode === "lifecycle-action") {
+        const target = gate.lifecycle?.target;
+        const targetId = target?.id;
+        const candidate = gate.extraction.candidates[0] as unknown as MemoryRecord | undefined;
+        const content = gate.lifecycle?.decision === "merge" && target ? `${target.content}\n\n${candidate?.summary || message.content}` : (candidate?.summary || sanitizeSensitiveText(message.content));
+        const updated = targetId
+          ? isGlobalPreference(candidate?.kind)
+            ? await this.client.updateProfile(targetId, content)
+            : await this.client.updateEvent(targetId, content)
+          : null;
+        if (!updated || updated.code !== 0 || !candidate || !target) {
+          return { accepted: false, count: lifecycleWrites, rejected, candidates: gate.extraction.candidates.length, decisions, backend: this.id, error: "lifecycle-action-deferred:no-updatable-remote-record", raw: gate };
+        }
+        const next = { ...candidate, content, status: "active" as const, supersedes: target.id ? [target.id] : [] };
+        persistLifecycleTransition(target, "superseded", `remote-${gate.lifecycle?.decision}`, target.id);
+        persistLifecycleRecord(next, targetId, `remote-${gate.lifecycle?.decision}`);
+        lifecycleWrites++;
+        continue;
+      }
+
+      sessionMessages.push({
+        ...message,
+        metadata: {
+          ...(message.metadata || {}),
+          tenant_id: context.identity.tenantId,
+          user_id: context.identity.userId,
+          assistant_id: context.identity.agentId,
+          workspace_id: context.identity.workspaceId,
+          policy_version: context.policyVersion,
+          request_id: context.requestId,
+          lifecycle_decision: decision,
+        },
+      });
+    }
+
+    if (sessionMessages.length === 0) return { accepted: rejected === 0, count: lifecycleWrites, rejected, decisions, backend: this.id };
+    const response = await this.client.addSession(`${sessionId}_${Date.now()}`, sessionMessages);
+    if (response?.code === 0 && createdCandidates.length) {
+      for (const candidate of createdCandidates) {
+        try {
+          const search = await this.client.search(candidate.summary, this.config.recallLimit);
+          const events = search?.data?.events || [];
+          const match = events.find((e: any) => (e.id || e.event_id) && (e?.memory_info?.summary || e?.summary || e?.content || "").includes(candidate.summary.slice(0, 24)));
+          if (match) backfillLifecycleRemoteId(candidate, match.id || match.event_id);
+        } catch { /* best-effort backfill */ }
+      }
+    }
+    return { ...responseResult(this.id, response, lifecycleWrites + sessionMessages.length), decisions, rejected: response?.code === 0 ? rejected : rejected + sessionMessages.length };
   }
 
-  async search(query: string, options?: { limit?: number; kind?: string }): Promise<MemoryItem[]> {
+  async search(query: string, options?: { limit?: number; kind?: string; context?: MemoryRequestContext }): Promise<MemoryItem[]> {
+    if (options?.context && !authorize(options.context, "recall").allowed) return [];
     const response = await this.client.search(query, options?.limit ?? this.config.recallLimit);
-    return response?.code === 0 ? contextItems(response.data) : [];
+    const items = response?.code === 0 ? contextItems(response.data, options?.context?.identity.userId || this.config.userId, options?.context?.identity.workspaceId || this.config.groupId, options?.context?.identity.tenantId || "local") : [];
+    return options?.context ? filterRecall(items, options.context).items : items;
   }
 
-  async remember(content: string, options?: { kind?: string; sessionId?: string }): Promise<CaptureResult> {
-    const response = await this.client.addEvent(sanitizeSensitiveText(content), options?.sessionId);
-    return responseResult(this.id, response, 1);
+  async remember(content: string, options?: { kind?: string; sessionId?: string; context?: MemoryRequestContext }): Promise<CaptureResult> {
+    const candidate = extractCandidates({ text: content, identity: options?.context?.identity || localIdentity(), purpose: options?.context?.purpose || "coding", sessionId: options?.sessionId, policyVersion: options?.context?.policyVersion });
+    if (options?.context && !authorize(options.context, "remember").allowed) return { accepted: false, count: 0, backend: this.id, error: "permission-denied:remember" };
+    if (candidate.rejected.length) return { accepted: false, count: 0, backend: this.id, error: `memory candidate rejected: ${candidate.rejected[0].reason}`, raw: candidate };
+    const memory = candidate.candidates[0];
+    const response = isGlobalPreference(memory?.kind)
+      ? await this.client.addProfile(sanitizeSensitiveText(content))
+      : await this.client.addEvent(sanitizeSensitiveText(content), options?.sessionId);
+    return { ...responseResult(this.id, response, 1), raw: { response, candidate: memory } };
   }
 
-  async updateProfile(profile: string): Promise<CaptureResult> {
-    return responseResult(this.id, await this.client.addProfile(sanitizeSensitiveText(profile)), 1);
+  async updateProfile(profile: string, context?: MemoryRequestContext): Promise<CaptureResult> {
+    if (context && !authorize(context, "profile").allowed) return { accepted: false, count: 0, backend: this.id, error: "permission-denied:profile" };
+    const candidate = extractCandidates({ text: profile, identity: context?.identity || localIdentity(), purpose: "chat", sessionId: context?.identity.sessionId, policyVersion: context?.policyVersion });
+    if (candidate.rejected.length) return { accepted: false, count: 0, backend: this.id, error: `profile candidate rejected: ${candidate.rejected[0].reason}`, raw: candidate };
+    return { ...responseResult(this.id, await this.client.addProfile(sanitizeSensitiveText(profile)), 1), raw: { candidate: candidate.candidates[0] } };
   }
 
   capabilitiesSnapshot() {
-    return { backend: this.id, capabilities: { ...this.capabilities } };
+    return {
+      backend: this.id,
+      provider: Object.fromEntries(Object.entries(this.capabilities).map(([key, value]) => [key, value ? "supported" : "unsupported"])),
+      native: {},
+      verified: this.client.connected,
+      checkedAt: new Date().toISOString(),
+    };
   }
 
   unsupported(operation: string): never {
@@ -75,7 +186,17 @@ export class VikingMemoryProvider implements MemoryProvider {
   }
 }
 
-function contextItems(value: any): MemoryItem[] {
+function isGlobalPreference(kind: string | undefined): boolean {
+  return kind === "profile" || kind === "preference";
+}
+
+function normalizeMemoryKind(value: unknown, fallback: string): string {
+  if (value === "profile_v1") return "profile";
+  if (value === "event_v1") return "event";
+  return typeof value === "string" && value ? value : fallback;
+}
+
+function contextItems(value: any, fallbackUserId = "", fallbackGroupId = "", fallbackTenantId = "local"): MemoryItem[] {
   if (!value || typeof value !== "object") return [];
   const result: MemoryItem[] = [];
   for (const [kind, keys] of Object.entries({
@@ -87,7 +208,16 @@ function contextItems(value: any): MemoryItem[] {
       const items = Array.isArray(value[key]) ? value[key] : value[key] ? [value[key]] : [];
       for (const item of items) {
         const content = item?.memory_info?.user_profile || item?.memory_info?.summary || item?.content || item?.text || (typeof item === "string" ? item : JSON.stringify(item));
-        if (content) result.push({ kind, content: String(content), id: item?.id || item?.event_id || item?.profile_id, score: item?.score, source: "viking-memory", scope: item?.session_id });
+        if (content) result.push({
+          kind: normalizeMemoryKind(item?.memory_type, kind),
+          content: String(content),
+          id: item?.id || item?.event_id || item?.profile_id,
+          score: item?.score,
+          source: item?.session_id ? `viking-memory:${item.session_id}` : "viking-memory",
+          scope: item?.memory_type === "profile_v1" ? "user" : item?.group_id ? "workspace" : item?.user_id ? "user" : item?.session_id ? "session" : "user",
+          timestamp: item?.time,
+          metadata: { status: item?.status || "active", confidence: item?.confidence || "medium", memory_type: item?.memory_type, session_id: item?.session_id, tenant_id: item?.tenant_id || fallbackTenantId, user_id: item?.user_id || fallbackUserId, workspace_id: item?.group_id || (item?.memory_type === "profile_v1" ? "__pi_global__" : fallbackGroupId || "local") },
+        });
       }
       if (items.length) break;
     }

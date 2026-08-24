@@ -51,19 +51,31 @@ test("Viking client builds session, event, profile and search requests", async (
   const mock = mockFetch();
   try {
     const client = new VikingMemoryClient(config);
-    await client.addSession("pi_batch", [{ role: "user", content: "remember this", time: 1 }]);
+    await client.addSession("pi_batch", [{ role: "user", content: "remember this", time: 1 }], { ttlRelativeSeconds: 3600 });
     await client.search("remember", 3);
     await client.addEvent("a durable event", "pi_batch");
     await client.addProfile("prefers concise answers");
-    assert.equal(mock.calls.length, 4);
+    await client.updateEvent("event-1", "updated event");
+    await client.updateProfile("profile-1", "updated profile");
+    assert.equal(mock.calls.length, 7);
     assert.equal(mock.calls[0].body.session_id, "pi_batch");
     assert.equal(mock.calls[0].body.messages[0].role, "user");
     assert.equal(mock.calls[0].body.metadata.default_user_id, "user_01");
     assert.equal(mock.calls[0].body.metadata.default_assistant_id, "pi");
+    assert.equal(mock.calls[0].body.ttl_relative, 3600);
     assert.equal(mock.calls[1].body.limit, 3);
-    assert.equal(mock.calls[2].body.event_type, "event_v1");
-    assert.equal(mock.calls[3].body.profile_type, "profile_v1");
-    assert.equal(mock.calls[3].body.is_upsert, true);
+    assert.deepEqual(mock.calls[1].body.filter.memory_type, ["event_v1"]);
+    assert.deepEqual(mock.calls[2].body.filter.memory_type, ["profile_v1"]);
+    assert.equal(mock.calls[2].body.filter.group_id, "__pi_global__");
+    assert.equal(mock.calls[3].body.event_type, "event_v1");
+    assert.equal(mock.calls[4].body.profile_type, "profile_v1");
+    assert.equal(mock.calls[4].body.is_upsert, true);
+    assert.equal(mock.calls[4].body.group_id, "__pi_global__");
+    assert.equal(mock.calls[5].url, "https://example.invalid/api/memory/event/update");
+    assert.equal(mock.calls[5].body.event_id, "event-1");
+    assert.equal(mock.calls[6].url, "https://example.invalid/api/memory/profile/update");
+    assert.equal(mock.calls[6].body.profile_id, "profile-1");
+    assert.equal(mock.calls[6].body.group_id, "__pi_global__");
   } finally { mock.restore(); }
 });
 

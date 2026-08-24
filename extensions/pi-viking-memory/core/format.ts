@@ -1,11 +1,16 @@
 import type { MemoryItem, RecallResult } from "./provider.js";
+import { MemoryPolicyEngine } from "./policy-engine.js";
 
 export const MEMORY_CONTEXT_OPEN = "<memory-context";
 export const MEMORY_CONTEXT_CLOSE = "</memory-context>";
 
-export function formatRecall(result: Omit<RecallResult, "block"> & { maxChars?: number }): string | null {
+export function formatRecall(result: Omit<RecallResult, "block"> & { maxChars?: number; purpose?: "chat" | "coding" }): string | null {
   const maxChars = Math.max(500, result.maxChars ?? 6000);
-  const items = dedupeItems(result.items).slice(0, 100);
+  const policy = new MemoryPolicyEngine();
+  const purpose = result.purpose === "chat" ? "chat" : "coding";
+  const annotated = dedupeItems(result.items).map((item) => policy.annotate(item));
+  const selected = policy.selectRecall(annotated, purpose);
+  const items = selected.items.slice(0, 100);
   if (items.length === 0) return null;
 
   const lines: string[] = [

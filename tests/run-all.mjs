@@ -1,6 +1,8 @@
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const loader = join(repoRoot, "extensions/pi-viking-memory/tests/register-loader.mjs");
@@ -16,5 +18,5 @@ for (const pattern of patterns) {
   files.push(...stdout.trim().split("\n").filter(Boolean));
 }
 const args = ["--experimental-strip-types", "--import", loader, "--test", ...files];
-const result = spawnSync(process.execPath, args, { stdio: "inherit", cwd: repoRoot });
+const result = spawnSync(process.execPath, args, { stdio: "inherit", cwd: repoRoot, env: { ...process.env, PI_MEMORY_STATE_DIR: mkdtempSync(join(tmpdir(), "pi-memory-test-")) } });
 process.exit(result.status ?? 1);
