@@ -196,14 +196,22 @@ function normalizeMemoryKind(value: unknown, fallback: string): string {
   return typeof value === "string" && value ? value : fallback;
 }
 
+function firstString(value: unknown, fallback = ""): string {
+  if (Array.isArray(value)) return firstString(value[0], fallback);
+  return typeof value === "string" && value ? value : fallback;
+}
+
 function contextItems(value: any, fallbackUserId = "", fallbackGroupId = "", fallbackTenantId = "local"): MemoryItem[] {
   if (!value || typeof value !== "object") return [];
   const result: MemoryItem[] = [];
-  for (const [kind, keys] of Object.entries({
+  // /api/memory/search returns `result_list`; get_context may return the
+  // legacy typed buckets below. Support both shapes.
+  const buckets: Record<string, string[]> = {
     profile: ["profile_memory", "profile_memories", "profiles", "profile"],
-    event: ["event_memory", "event_memories", "events", "event"],
+    event: ["result_list", "event_memory", "event_memories", "events", "event"],
     session: ["messages", "short_term_memory", "conversation"],
-  })) {
+  };
+  for (const [kind, keys] of Object.entries(buckets)) {
     for (const key of keys) {
       const items = Array.isArray(value[key]) ? value[key] : value[key] ? [value[key]] : [];
       for (const item of items) {
@@ -216,7 +224,7 @@ function contextItems(value: any, fallbackUserId = "", fallbackGroupId = "", fal
           source: item?.session_id ? `viking-memory:${item.session_id}` : "viking-memory",
           scope: item?.memory_type === "profile_v1" ? "user" : item?.group_id ? "workspace" : item?.user_id ? "user" : item?.session_id ? "session" : "user",
           timestamp: item?.time,
-          metadata: { status: item?.status || "active", confidence: item?.confidence || "medium", memory_type: item?.memory_type, session_id: item?.session_id, tenant_id: item?.tenant_id || fallbackTenantId, user_id: item?.user_id || fallbackUserId, workspace_id: item?.group_id || (item?.memory_type === "profile_v1" ? "__pi_global__" : fallbackGroupId || "local") },
+          metadata: { status: item?.status || "active", confidence: item?.confidence || "medium", memory_type: item?.memory_type, session_id: item?.session_id, tenant_id: firstString(item?.tenant_id, fallbackTenantId), user_id: firstString(item?.user_id, fallbackUserId), workspace_id: firstString(item?.group_id, item?.memory_type === "profile_v1" ? "__pi_global__" : fallbackGroupId || "local") },
         });
       }
       if (items.length) break;
