@@ -158,6 +158,20 @@ export default async function (pi: ExtensionAPI) {
     handler: async (_args: string, ctx: any) => { ctx.ui.notify(auditReceipt(conversationId, requestContextValue.identity, recentAuditRecords(conversationId)), "info"); },
   });
 
+  pi.registerCommand("viking-memory-workspace", {
+    description: "Show the active Git-stable workspace and global memory bucket.",
+    handler: async (_args: string, ctx: any) => {
+      ctx.ui.notify(JSON.stringify({
+        workspaceId: workspace.id,
+        source: workspace.source,
+        gitRemote: workspace.canonicalRemote || null,
+        repositoryRoot: workspace.repositoryRoot || null,
+        globalProfileGroup: "__pi_global__",
+        recall: "current workspace events + global profiles only",
+      }, null, 2), "info");
+    },
+  });
+
   pi.registerCommand("viking-memory", {
     description: "Remote Viking Memory status; use 'search <query>' to search memories.",
     handler: async (args: string, ctx: any) => {
@@ -166,7 +180,7 @@ export default async function (pi: ExtensionAPI) {
         ctx.ui.notify(items.length ? JSON.stringify(items) : "No results found.", "info");
         return;
       }
-      ctx.ui.notify(`Viking Memory: ${connected ? "connected" : "disconnected"} | collection=${config.collectionName} | project=${config.projectName} | conversation=${conversationId || "none"}`, connected ? "info" : "warning");
+      ctx.ui.notify(`Viking Memory: ${connected ? "connected" : "disconnected"} | collection=${config.collectionName} | workspace=${workspace.id} (${workspace.source}) | conversation=${conversationId || "none"}`, connected ? "info" : "warning");
     },
   });
 }
