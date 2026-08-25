@@ -32,7 +32,7 @@ export function extractCandidates(input: CandidateInput): CandidateExtractionRes
   // user statement; system events are treated as observations. Correction
   // signals ("不对/错了/现在改成 X") count as high-confidence explicit user
   // content regardless of the message role.
-  const explicitUser = /remember|请记住|confirmed|确认|决定|以后|改用|不要|不对|错了|不是这样|记错了|现在(?:改|用|是)|已经不用|不再是|correction|纠正/i.test(input.text);
+  const explicitUser = /remember|请记住|confirmed|确认|决定|以后|改用|改成|换成|迁移到|换成了|不要|不对|错了|不是这样|记错了|现在(?:改|用|是)|已经不用|不再是|correction|纠正/i.test(input.text);
   const confidence = explicitUser || sourceType === "user" ? "high" : "medium";
   return {
     candidates: [{
@@ -54,11 +54,19 @@ export function extractCandidates(input: CandidateInput): CandidateExtractionRes
 }
 
 export function classify(text: string, purpose: "chat" | "coding"): MemoryKind | null {
-  if (/不要|别用|改用|改成|换成|迁移到|换成了|no,? use|correction|纠正|不对|错了|不是这样|记错了|已经不用|不再是|现在(?:改|用|是)/i.test(text)) return "preference";
+  if (/不要|别用|不用|no,? use|correction|纠正/i.test(text)) return "preference";
   if (/根因|修复|failed|failure|错误|报错|验证通过|fixed/i.test(text)) return "experience";
   if (/架构|决定|decision|选择.*方案|采用/i.test(text)) return "decision";
   if (/请记住|记住|记得|remember|偏好|喜欢|prefer|profile/i.test(text)) return "profile";
   if (/完成|开始|发生|在.*进行了|做了|执行|重构|迁移|上线|提交了/i.test(text)) return "event";
   if (purpose === "coding" && /package\.json|测试命令|目录|workspace|项目|project|npm |pnpm |docker/i.test(text)) return "project";
   return null;
+}
+
+/**
+ * Correction/update signals ("不对/改成/换成/迁移到…") must NOT steal the kind —
+ * they only raise confidence and mark the fact as an update over an existing one.
+ */
+export function correctionSignal(text: string): boolean {
+  return /改用|改成|换成|迁移到|换成了|不对|错了|不是这样|记错了|已经不用|不再是|现在(?:改|用|是)/i.test(text);
 }
