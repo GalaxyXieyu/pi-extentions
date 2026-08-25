@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.10 - 2026-08-25
+
+### Features
+
+- /viking-memory status now prints the extension version for quick load-version checks.
+
 ## 0.2.9 - 2026-08-25
 
 ### Fixes

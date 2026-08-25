@@ -15,6 +15,9 @@ import { auditReceipt, handleReviewPrompts, recentAuditRecords, runConsolidation
 import { makePilotComplete } from "../../core/pilot.js";
 import { resolveWorkspaceIdentity } from "../../core/workspace-identity.js";
 
+/** Keep in sync with package.json; surfaced in /viking-memory for version checks. */
+export const EXTENSION_VERSION = "0.2.10";
+
 export default async function (pi: ExtensionAPI) {
   const config = loadConfigFromModuleUrl(import.meta.url);
   if (!config.enabled || !isSelected("viking-memory")) return;
@@ -197,7 +200,7 @@ export default async function (pi: ExtensionAPI) {
         ctx.ui.notify(items.length ? JSON.stringify(items) : "No results found.", "info");
         return;
       }
-      ctx.ui.notify(`Viking Memory: ${connected ? "connected" : "disconnected"} | collection=${config.collectionName} | workspace=${workspace.id} (${workspace.source}) | conversation=${conversationId || "none"}`, connected ? "info" : "warning");
+      ctx.ui.notify(`Viking Memory v${EXTENSION_VERSION}: ${connected ? "connected" : "disconnected"} | collection=${config.collectionName} | workspace=${workspace.id} (${workspace.source}) | conversation=${conversationId || "none"}`, connected ? "info" : "warning");
     },
   });
 }
