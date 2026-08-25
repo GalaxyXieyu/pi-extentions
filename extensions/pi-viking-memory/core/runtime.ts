@@ -89,17 +89,22 @@ export async function gateCapture(text: string, identity: MemoryIdentity, contex
   // unrelated→create, everything else stays conflict for human review.
   if (arbiter && lifecycle.decision === "conflict" && lifecycle.target) {
     const arbitration = await arbiter(candidateRecord.content, existing);
+    // preserve-and-confirm (default): NEVER auto-execute arbitration results.
+    // Only when the caller explicitly opted into auto-merge may supplemental/
+    // superseding memories be applied without human confirmation.
+    const autoMerge = context.lifecycle?.conflictPolicy === "auto-merge";
     if (arbitration) {
       if (arbitration.relation === "duplicate") {
         lifecycle = { ...lifecycle, decision: "skip", reason: `llm-arbitration:${arbitration.relation}` };
-      } else if (arbitration.relation === "supplement") {
+      } else if (arbitration.relation === "supplement" && autoMerge) {
         lifecycle = { ...lifecycle, decision: "merge", reason: `llm-arbitration:${arbitration.relation}` };
-      } else if (arbitration.relation === "supersede" && arbitration.confidence >= 0.75) {
+      } else if (arbitration.relation === "supersede" && arbitration.confidence >= 0.75 && autoMerge) {
         lifecycle = { ...lifecycle, decision: "supersede", reason: `llm-arbitration:${arbitration.relation}` };
       } else if (arbitration.relation === "unrelated") {
         lifecycle = { ...lifecycle, decision: "create", reason: `llm-arbitration:${arbitration.relation}` };
       }
-      // conflict / low-confidence stays conflict -> pending_review + human
+      // supplement/supersede under preserve-and-confirm, and conflict,
+      // always stay conflict -> pending_review + human confirmation.
     }
   }
   if (!["create"].includes(lifecycle.decision)) {

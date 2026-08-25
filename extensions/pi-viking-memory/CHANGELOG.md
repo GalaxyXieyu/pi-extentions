@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.8 - 2026-08-25
+
+### Fixes
+
+- preserve-and-confirm (default) now overrides LLM arbitration: supplement/supersede stay conflict → TUI confirmation; only MEMORY_CONFLICT_POLICY=auto-merge applies arbitration automatically.
+
 ## 0.2.7 - 2026-08-25
 
 ### Fixes

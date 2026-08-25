@@ -182,20 +182,26 @@ test("arbitration is triggered after rules flag a conflict", async () => {
   const { gateCapture } = await import("../runtime.ts");
   const { localIdentity, requestContext } = await import("../contracts.ts");
   const identity = localIdentity({ userId: "u1", workspaceId: "ws" });
-  const ctx = requestContext(identity);
-  // existing 与候选同 kind=preference、同 scope=user，内容不同 -> 规则层 high+active -> supersede -> preserve-and-confirm -> conflict
-  const existing = [{ id: "m1", kind: "decision", scope: "workspace", content: "我们决定包管理用 npm", metadata: { user_id: "u1", tenant_id: "local", workspace_id: "ws", status: "active" } }];
-  const run = (relation, conf = 0.9) => gateCapture(
-    "我们决定包管理用 pnpm", identity, ctx, async () => existing, "user",
+  const preserveCtx = requestContext(identity);
+  const autoCtx = requestContext(identity, { lifecycle: { expiryEnabled: true, conflictPolicy: "auto-merge" } });
+  const existing = [{ id: "m1", kind: "decision", scope: "workspace", content: "包管理采用 npm", metadata: { user_id: "u1", tenant_id: "local", workspace_id: "ws", status: "active" } }];
+  // agent 来源、无显式信号 → 中置信度 → 规则层给 conflict → 仲裁有机会介入
+  const run = (ctx, relation, conf = 0.9) => gateCapture(
+    "包管理采用 pnpm", identity, ctx, async () => existing, "agent",
     async () => ({ relation, confidence: conf }),
   );
-  assert.equal((await run("supplement")).lifecycle?.decision, "merge");
-  assert.equal((await run("duplicate")).lifecycle?.decision, "skip");
-  assert.equal((await run("unrelated")).lifecycle?.decision, "create");
-  assert.equal((await run("supersede", 0.8)).lifecycle?.decision, "supersede");
-  assert.equal((await run("supersede", 0.3)).lifecycle?.decision, "conflict");
-  assert.equal((await run("conflict")).lifecycle?.decision, "conflict");
+  // preserve-and-confirm（默认）：仲裁出的 supplement/supersede 也必须保持 conflict
+  assert.equal((await run(preserveCtx, "supplement")).lifecycle?.decision, "conflict");
+  assert.equal((await run(preserveCtx, "supersede", 0.9)).lifecycle?.decision, "conflict");
+  // duplicate/unrelated 仍然安全降噪
+  assert.equal((await run(preserveCtx, "duplicate")).lifecycle?.decision, "skip");
+  assert.equal((await run(preserveCtx, "unrelated")).lifecycle?.decision, "create");
+  // auto-merge 下才允许自动转换
+  assert.equal((await run(autoCtx, "supplement")).lifecycle?.decision, "merge");
+  assert.equal((await run(autoCtx, "supersede", 0.9)).lifecycle?.decision, "supersede");
+  assert.equal((await run(autoCtx, "supersede", 0.3)).lifecycle?.decision, "conflict");
+  assert.equal((await run(autoCtx, "conflict")).lifecycle?.decision, "conflict");
   // 返回 null 的 arbiter 回退规则
-  assert.equal((await gateCapture("我们决定包管理用 pnpm", identity, ctx, async () => existing, "user", async () => null)).lifecycle?.decision, "conflict");
+  assert.equal((await gateCapture("包管理采用 pnpm", identity, preserveCtx, async () => existing, "agent", async () => null)).lifecycle?.decision, "conflict");
   delete process.env.PI_MEMORY_LIFECYCLE_FILE;
 });
