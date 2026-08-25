@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.2 - 2026-08-25
+
+### Features
+
+- LLM curation funnel is now ON by default (auto):
+  - rule hits never cost an LLM call; only the rule-miss tail invokes the LLM after batching thresholds (4 msgs / 1200 chars)
+  - inherits the pi session's active provider/model/auth automatically — zero config
+  - `PI_MEMORY_LLM_ENABLED=0` opts out to the pure zero-cost rule path
+
 ## 0.2.1 - 2026-08-25
 
 ### Features

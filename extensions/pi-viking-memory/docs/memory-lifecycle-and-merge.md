@@ -642,9 +642,10 @@ OPENVIKING_RECALL_QUERY_EXPANSION=off
 当前代码已提供可选批量抽取层，默认关闭（零成本，不改变现有行为）：
 
 ```bash
-PI_MEMORY_LLM_ENABLED=1                        # 开启批量 LLM 抽取
-PI_MEMORY_LLM_URL=http://127.0.0.1:11434/v1     # OpenAI 兼容端点（含 Ollama）
-PI_MEMORY_LLM_MODEL=qwen2.5:7b                 # 本地小模型即可
+# LLM 漏斗：默认开启（PI_MEMORY_LLM_ENABLED=0 关闭 → 纯规则零成本路径）
+PI_MEMORY_LLM_ENABLED=1                        # 显式开启（当前已为默认）
+PI_MEMORY_LLM_MODEL=anthropic/claude-haiku-4-5 # 可选：pi 已配置的任意模型（auth 继承）
+PI_MEMORY_LLM_URL=http://127.0.0.1:11434/v1     # 可选：非目录模型兼容端点（如 Ollama）
 PI_MEMORY_LLM_BATCH_COUNT=4                    # 未决队列触发条数（默认 4）
 PI_MEMORY_LLM_BATCH_CHARS=1200                 # 未决队列触发字符数（默认 1200）
 PI_MEMORY_LLM_BATCH_MAX_ATTEMPTS=3             # 单次重试上限

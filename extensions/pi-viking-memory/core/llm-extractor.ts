@@ -55,17 +55,20 @@ export interface LlmExtractionResult {
 }
 
 /**
- * Whether the LLM funnel path is enabled. The completion source is resolved
- * in this order:
- *   1. host-injected complete (pi session model, zero config)
- *   2. PI_MEMORY_LLM_URL OpenAI-compatible endpoint (e.g. local Ollama)
+ * Whether the LLM funnel path is enabled.
+ *
+ * Default ON (auto): the funnel only invokes an LLM for the rule-miss long
+ * tail once the batch threshold (4 msgs / 1200 chars) is reached — explicit
+ * rule hits never cost a call. Set PI_MEMORY_LLM_ENABLED=0 to stay on the
+ * pure zero-cost rule path.
  */
 export function llmExtractionEnabled(): boolean {
-  return process.env.PI_MEMORY_LLM_ENABLED === "1";
+  const raw = String(process.env.PI_MEMORY_LLM_ENABLED ?? "1").toLowerCase();
+  return raw !== "0" && raw !== "false" && raw !== "off" && raw !== "no";
 }
 
 export function llmEndpoint(): string {
-  return String(process.env.PI_MEMORY_LLM_URL || "http://127.0.0.1:11434/v1").replace(/\/+$/, "");
+  return String(process.env.PI_MEMORY_LLM_URL || "").replace(/\/+$/, "");
 }
 
 export function llmModel(): string {
