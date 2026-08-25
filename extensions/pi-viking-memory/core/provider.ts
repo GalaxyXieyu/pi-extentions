@@ -1,4 +1,5 @@
 import type { MemoryRequestContext, MemoryRecord } from "./contracts.js";
+import type { LlmCompleteFn } from "./llm-extractor.js";
 
 export type MemoryBackendId = "viking-memory" | "openviking";
 export type MemoryKind = "profile" | "preference" | "project" | "decision" | "event" | "experience" | "workflow" | "resource" | "session";
@@ -80,6 +81,8 @@ export interface MemoryProvider {
   updateProfile(profile: string, context?: MemoryRequestContext): Promise<CaptureResult>;
   capabilitiesSnapshot(): { backend: MemoryBackendId; capabilities: MemoryCapabilities };
   unsupported(operation: string): never;
+  /** Optional pilot completion hook (inherits pi's provider/auth). */
+  setPilotComplete?(complete: LlmCompleteFn | null): void;
 }
 
 export function capabilitiesSnapshot(provider: Pick<MemoryProvider, "id" | "capabilities">): { backend: MemoryBackendId; capabilities: MemoryCapabilities } {

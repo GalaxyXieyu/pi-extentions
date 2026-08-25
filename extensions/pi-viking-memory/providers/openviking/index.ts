@@ -27,6 +27,7 @@ import { memoryStats, measure } from "../../core/runtime.js";
 import { loadCanonicalConfig } from "../../core/config-protocol.js";
 import { localIdentity, requestContext, resolverFromEnv, type MemoryRequestContext } from "../../core/contracts.js";
 import { auditReceipt, handleReviewPrompts, recentAuditRecords, runConsolidationPass } from "../../core/runtime.js";
+import { makePilotComplete } from "../../core/pilot.js";
 
 export default async function (pi: ExtensionAPI) {
   // --- Load config ---
@@ -176,6 +177,10 @@ export default async function (pi: ExtensionAPI) {
   pi.on("before_agent_start", async (event, ctx) => {
     // session_start doesn't fire for pi -c continuations.
     await start(ctx);
+
+    // Refresh the pilot completion hook with this turn's ctx so the LLM
+    // funnel inherits the pi session's active provider/auth. Zero-config.
+    provider.setPilotComplete(makePilotComplete(() => ctx));
 
     if (!connected || bypassed) return;
 

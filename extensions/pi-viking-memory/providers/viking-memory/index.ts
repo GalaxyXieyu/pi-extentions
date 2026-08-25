@@ -12,6 +12,7 @@ import { memoryStats, measure } from "../../core/runtime.js";
 import { loadCanonicalConfig } from "../../core/config-protocol.js";
 import { localIdentity, requestContext, resolverFromEnv, type MemoryRequestContext } from "../../core/contracts.js";
 import { auditReceipt, handleReviewPrompts, recentAuditRecords, runConsolidationPass } from "../../core/runtime.js";
+import { makePilotComplete } from "../../core/pilot.js";
 import { resolveWorkspaceIdentity } from "../../core/workspace-identity.js";
 
 export default async function (pi: ExtensionAPI) {
@@ -90,6 +91,9 @@ export default async function (pi: ExtensionAPI) {
   pi.on("before_agent_start", async (event: any, ctx: any) => {
     await start(ctx);
     if (!connected) return;
+    // Refresh the pilot hook with this turn's ctx so the LLM funnel inherits
+    // the pi session's active provider/auth. Zero standalone config.
+    provider.setPilotComplete(makePilotComplete(() => ctx));
     pendingPrompt = String(event?.prompt || "");
   });
 

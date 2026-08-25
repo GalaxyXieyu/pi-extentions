@@ -9,6 +9,7 @@ import { localIdentity } from "../../core/contracts.js";
 import { scanMemoryContent } from "../../core/content-scanner.js";
 import { authorize, curateWithLlm, filterRecall, gateCapture, persistLifecycleRecord, persistLifecycleTransition, backfillLifecycleRemoteId, memoryHistoryById } from "../../core/runtime.js";
 import { llmExtractionEnabled } from "../../core/llm-extractor.js";
+import type { LlmCompleteFn } from "../../core/llm-extractor.js";
 import { lifecycleFingerprint } from "../../core/lifecycle-store.js";
 import { rerankRecall } from "../../core/recall-rerank.js";
 import { CurationQueue } from "../../core/curation-queue.js";
@@ -31,6 +32,12 @@ export class VikingMemoryProvider implements MemoryProvider {
   private readonly client: VikingMemoryClient;
   private readonly config: VikingMemoryConfig;
   private readonly curationQueue = new CurationQueue();
+  private pilotComplete: LlmCompleteFn | null = null;
+
+  /** Inherit pi's provider/auth for the LLM funnel (zero standalone config). */
+  setPilotComplete(complete: LlmCompleteFn | null): void {
+    this.pilotComplete = complete;
+  }
 
   constructor(client: VikingMemoryClient, config: VikingMemoryConfig) {
     this.client = client;
@@ -206,7 +213,7 @@ export class VikingMemoryProvider implements MemoryProvider {
     const batch = this.curationQueue.takeBatch();
     if (!batch.length) return { count: 0, rejected: 0, decisions };
 
-    const curated = await curateWithLlm(batch, context.identity, context, async (query) => this.search(query, { limit: this.config.recallLimit, context }));
+    const curated = await curateWithLlm(batch, context.identity, context, async (query) => this.search(query, { limit: this.config.recallLimit, context }), this.pilotComplete ?? undefined);
     if (!curated.handled) {
       this.curationQueue.requeue(batch);
       return { count: 0, rejected: 0, decisions };

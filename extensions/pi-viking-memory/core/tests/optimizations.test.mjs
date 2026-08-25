@@ -106,3 +106,45 @@ test("curation queue enqueues, thresholds on count, and requeues bounded", () =>
   assert.equal(q.size, 0); // max attempts reached
   delete process.env.PI_MEMORY_LLM_BATCH_COUNT;
 });
+test("llm-extractor uses pilot complete hook instead of fetch", async () => {
+  process.env.PI_MEMORY_LLM_ENABLED = "1";
+  delete process.env.PI_MEMORY_LLM_URL;
+  const { extractMemories } = await import("../llm-extractor.ts");
+  let called = 0;
+  const result = await extractMemories({
+    endpoint: "http://127.0.0.1:1/v1", // must not be hit
+    model: "unused",
+    newBatch: [{ role: "user", content: "这套工具链太折腾了，新的顺手很多" }],
+    existingMemories: [],
+    complete: async (messages) => {
+      called++;
+      const system = messages.find((m) => m.role === "system")?.content || "";
+      const user = messages.find((m) => m.role === "user")?.content || "";
+      assert.ok(system.includes("memory curator"));
+      assert.ok(user.includes("这套工具链"));
+      return JSON.stringify({ memories: [{ action: "add", text: "偏好轻量工具链", kind: "preference", scope: "user", confidence: 0.8 }] });
+    },
+  });
+  assert.equal(called, 1);
+  assert.equal(result.ok, true);
+  assert.equal(result.memories[0].text, "偏好轻量工具链");
+  assert.equal(result.memories[0].kind, "preference");
+  delete process.env.PI_MEMORY_LLM_ENABLED;
+});
+
+test("llm funnel enabled without endpoint/pilot falls back to rules", async () => {
+  process.env.PI_MEMORY_LLM_ENABLED = "1";
+  delete process.env.PI_MEMORY_LLM_URL;
+  const { curateWithLlm } = await import("../runtime.ts");
+  const { localIdentity, requestContext } = await import("../contracts.ts");
+  const identity = localIdentity({ userId: "u1" });
+  const result = await curateWithLlm(
+    [{ role: "user", content: "测试" }],
+    identity,
+    requestContext(identity),
+    async () => [],
+    undefined,
+  );
+  assert.equal(result.handled, false);
+  delete process.env.PI_MEMORY_LLM_ENABLED;
+});

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.1 - 2026-08-25
+
+### Features
+
+- LLM curation inherits the pi session's active provider/model/auth via `ctx.modelRegistry.complete()` — zero standalone endpoint config
+  - `PI_MEMORY_LLM_MODEL=provider/model` selects any configured pi model (auth inherited)
+  - standalone `PI_MEMORY_LLM_URL` endpoint remains as fallback for non-catalog models (e.g. local Ollama)
+
 ## 0.2.0 - 2026-08-25
 
 ### Features

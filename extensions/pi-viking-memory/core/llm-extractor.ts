@@ -36,7 +36,16 @@ export interface LlmExtractionOptions {
   existingMemories?: MemoryItem[];  // top-k existing memories for add/noop/update decisions
   maxExisting?: number;
   maxCharsPerEntry?: number;
+  /** Optional pi-pilot completion hook (inherits pi's provider/auth). */
+  complete?: LlmCompleteFn;
 }
+
+/**
+ * A completion hook supplied by the pi host: messages in (system+user), final
+ * text out. When present, extraction inherits the pi session's provider,
+ * model, and credentials — zero standalone LLM configuration.
+ */
+export type LlmCompleteFn = (messages: Array<{ role: "system" | "user"; content: string }>) => Promise<string>;
 
 export interface LlmExtractionResult {
   ok: boolean;
@@ -45,8 +54,14 @@ export interface LlmExtractionResult {
   fallbackToRules: boolean;
 }
 
+/**
+ * Whether the LLM funnel path is enabled. The completion source is resolved
+ * in this order:
+ *   1. host-injected complete (pi session model, zero config)
+ *   2. PI_MEMORY_LLM_URL OpenAI-compatible endpoint (e.g. local Ollama)
+ */
 export function llmExtractionEnabled(): boolean {
-  return process.env.PI_MEMORY_LLM_ENABLED === "1" && Boolean(process.env.PI_MEMORY_LLM_URL);
+  return process.env.PI_MEMORY_LLM_ENABLED === "1";
 }
 
 export function llmEndpoint(): string {
@@ -107,6 +122,21 @@ function clip(value: string, max: number): string {
 
 export async function extractMemories(opts: LlmExtractionOptions): Promise<LlmExtractionResult> {
   const timeoutMs = opts.timeoutMs ?? 20000;
+  const promptMessages: Array<{ role: "system" | "user"; content: string }> = [
+    { role: "system", content: EXTRACTION_SYSTEM_PROMPT },
+    { role: "user", content: buildExtractionPrompt(opts) },
+  ];
+
+  // Host-piloted path: inherit pi's provider/auth. No endpoint needed.
+  if (opts.complete) {
+    try {
+      const text = await opts.complete(promptMessages);
+      return parseExtractionResponse(text);
+    } catch (err: any) {
+      return { ok: false, memories: [], error: String(err?.message || err), fallbackToRules: true };
+    }
+  }
+
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -119,10 +149,7 @@ export async function extractMemories(opts: LlmExtractionOptions): Promise<LlmEx
       body: JSON.stringify({
         model: opts.model,
         temperature: 0,
-        messages: [
-          { role: "system", content: EXTRACTION_SYSTEM_PROMPT },
-          { role: "user", content: buildExtractionPrompt(opts) },
-        ],
+        messages: promptMessages,
         response_format: { type: "json_object" },
       }),
       signal: controller.signal,
@@ -134,31 +161,42 @@ export async function extractMemories(opts: LlmExtractionOptions): Promise<LlmEx
 
     const body: any = await res.json().catch(() => null);
     const text = String(body?.choices?.[0]?.message?.content || "");
-    if (!text) return { ok: false, memories: [], error: "empty LLM extraction response", fallbackToRules: true };
-
-    const cleaned = text.replace(/```(?:json)?\s*/gi, "").replace(/```\s*$/gi, "").trim();
-    const start = cleaned.indexOf("{");
-    const end = cleaned.lastIndexOf("}");
-    if (start < 0 || end < start) return { ok: false, memories: [], error: "non-JSON LLM extraction response", fallbackToRules: true };
-
-    const parsed = JSON.parse(cleaned.slice(start, end + 1));
-    const raw = Array.isArray(parsed?.memories) ? parsed.memories : [];
-    const memories: ExtractedMemory[] = raw
-      .filter((m: any) => m && typeof m.text === "string" && String(m.text).trim())
-      .map((m: any) => ({
-        action: ["add", "noop", "update"].includes(m.action) ? m.action : "add",
-        text: String(m.text).trim(),
-        kind: String(m.kind || "").trim() || undefined,
-        scope: String(m.scope || "").trim() || undefined,
-        confidence: typeof m.confidence === "number" ? Math.max(0, Math.min(1, m.confidence)) : undefined,
-        supersedes_id: Array.isArray(m.supersedes_id) ? m.supersedes_id.map(String) : undefined,
-        reason: String(m.reason || "").trim() || undefined,
-      }));
-    return { ok: true, memories, fallbackToRules: false };
+    return parseExtractionResponse(text);
   } catch (err: any) {
     const timedOut = err?.name === "AbortError";
     return { ok: false, memories: [], error: timedOut ? "timeout" : String(err?.message || err), fallbackToRules: true };
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** Shared JSON parse + validation for both completion channels. */
+function parseExtractionResponse(text: string): LlmExtractionResult {
+  if (!text) return { ok: false, memories: [], error: "empty LLM extraction response", fallbackToRules: true };
+
+  const cleaned = text.replace(/```(?:json)?\s*/gi, "").replace(/```\s*$/gi, "").trim();
+  const start = cleaned.indexOf("{");
+  const end = cleaned.lastIndexOf("}");
+  if (start < 0 || end < start) return { ok: false, memories: [], error: "non-JSON LLM extraction response", fallbackToRules: true };
+
+  let parsed: any;
+  try {
+    parsed = JSON.parse(cleaned.slice(start, end + 1));
+  } catch {
+    return { ok: false, memories: [], error: "invalid JSON LLM extraction response", fallbackToRules: true };
+  }
+
+  const raw = Array.isArray(parsed?.memories) ? parsed.memories : [];
+  const memories: ExtractedMemory[] = raw
+    .filter((m: any) => m && typeof m.text === "string" && String(m.text).trim())
+    .map((m: any) => ({
+      action: ["add", "noop", "update"].includes(m.action) ? m.action : "add",
+      text: String(m.text).trim(),
+      kind: String(m.kind || "").trim() || undefined,
+      scope: String(m.scope || "").trim() || undefined,
+      confidence: typeof m.confidence === "number" ? Math.max(0, Math.min(1, m.confidence)) : undefined,
+      supersedes_id: Array.isArray(m.supersedes_id) ? m.supersedes_id.map(String) : undefined,
+      reason: String(m.reason || "").trim() || undefined,
+    }));
+  return { ok: true, memories, fallbackToRules: false };
 }

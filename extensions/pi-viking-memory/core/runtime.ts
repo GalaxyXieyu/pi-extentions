@@ -7,7 +7,7 @@ import type { MemoryItem, MemoryMessage } from "./provider.js";
 import { sanitizeSensitiveValue } from "./sensitive.mjs";
 import { getLifecycleStore, lifecycleFingerprint, type LifecycleLedgerEntry } from "./lifecycle-store.js";
 import { GLOBAL_MEMORY_GROUP } from "./workspace-identity.js";
-import { extractMemories, llmEndpoint, llmExtractionEnabled, llmModel } from "./llm-extractor.js";
+import { extractMemories, llmEndpoint, llmExtractionEnabled, llmModel, type LlmCompleteFn } from "./llm-extractor.js";
 import { scanMemoryContent } from "./content-scanner.js";
 import { classify } from "./candidate-extractor.js";
 import type { MemoryKind } from "./contracts.js";
@@ -226,8 +226,11 @@ export async function curateWithLlm(
   identity: MemoryIdentity,
   context: MemoryRequestContext,
   lookup: (query: string) => Promise<MemoryItem[]>,
+  complete?: LlmCompleteFn,
 ): Promise<{ handled: boolean; decisions: LlmCaptureDecision[] }> {
   if (!llmExtractionEnabled()) return { handled: false, decisions: [] };
+  // Needs at least one completion source: pilot hook or an endpoint.
+  if (!complete && !process.env.PI_MEMORY_LLM_URL) return { handled: false, decisions: [] };
   const query = clipQuery(messages);
   if (!query) return { handled: false, decisions: [] };
 
@@ -237,6 +240,7 @@ export async function curateWithLlm(
     model: llmModel(),
     newBatch: messages,
     existingMemories: existing,
+    complete,
   });
   if (!result.ok || result.fallbackToRules) {
     memoryStats.record({ type: "error", backend: "llm", operation: "curation", requestId: context.requestId, error: result.error || "llm-unavailable" });
