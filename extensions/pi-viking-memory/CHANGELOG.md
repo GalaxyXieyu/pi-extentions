@@ -1,15 +1,29 @@
 # Changelog
 
+## 0.2.6 - 2026-08-25
+
+### Fixes
+
+- Correction/update words (改成/换成/迁移到) no longer steal the memory kind\n  during classification — "记住...用 Jenkins" and "记住...改成 GitHub Actions"\n  now classify to the same kind so update conflicts are detected.\n- Conflict lookup now runs a dual query (original + correction-stripped text)\n  so the replaced memory is found even when the store is flooded with test\n  duplicates.
+
 ## 0.2.5 - 2026-08-25
 
 ### Features
 
-- LLM conflict arbitration: rule-triggered conflicts are refined by an LLM\n  classification (duplicate/supplement/supersede/conflict/unrelated) —\n  duplicate→skip, supplement→merge, high-confidence supersede→supersede,\n  unrelated→create, rest falls back to pending_review + human review.\n  Zero-config: inherits the pi session's model/auth through the pilot\n  completion hook; any LLM failure falls back to plain rules.
-- `viking_memory_remember` now runs the same conflict gate as automatic\n  capture — a remembered fact that contradicts an existing memory becomes\n  a pending review instead of silently writing a second record.
+- LLM conflict arbitration: rule-triggered conflicts are refined by an LLM
+  classification (duplicate/supplement/supersede/conflict/unrelated) —
+  duplicate→skip, supplement→merge, high-confidence supersede→supersede,
+  unrelated→create, rest falls back to pending_review + human review.
+  Zero-config: inherits the pi session's model/auth through the pilot
+  completion hook; any LLM failure falls back to plain rules.
+- `viking_memory_remember` now runs the same conflict gate as automatic
+  capture — a remembered fact that contradicts an existing memory becomes
+  a pending review instead of silently writing a second record.
 
 ### Fixes
 
-- Conflict raised by the remember tool now flows into turn_end so the TUI\n  confirmation prompt (MEMORY_REVIEW_MODE=confirm) fires.
+- Conflict raised by the remember tool now flows into turn_end so the TUI
+  confirmation prompt (MEMORY_REVIEW_MODE=confirm) fires.
 
 ## 0.2.4 - 2026-08-25
 

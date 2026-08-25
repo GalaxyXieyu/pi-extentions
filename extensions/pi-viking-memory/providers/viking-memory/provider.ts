@@ -111,11 +111,7 @@ export class VikingMemoryProvider implements MemoryProvider {
       const ruleHit = ruleCandidates.candidates.length > 0;
 
       if (ruleHit) {
-      const gate = await gateCapture(message.content, context.identity, context, async (query) => {
-        const response = await this.client.search(query, this.config.recallLimit);
-        const items = response?.code === 0 ? contextItems(response.data, context.identity.userId, context.identity.workspaceId || this.config.groupId, context.identity.tenantId) : [];
-        return filterRecall(items, context).items;
-      }, message.role === "assistant" ? "agent" : "user", this.arbiter);
+      const gate = await gateCapture(message.content, context.identity, context, async (query) => this.searchAll(query, context), message.role === "assistant" ? "agent" : "user", this.arbiter);
       const decision = gate.lifecycle?.decision || "capture-only";
       if (decision === "create" && gate.extraction.candidates[0]) createdCandidates.push(gate.extraction.candidates[0] as unknown as import("../../core/contracts.js").MemoryRecord);
       decisions.push({ decision, reason: gate.reason, kind: gate.extraction.candidates[0]?.kind });
@@ -281,6 +277,27 @@ export class VikingMemoryProvider implements MemoryProvider {
     return options?.context ? filterRecall(items, options.context).items : items;
   }
 
+  /** Dual-query semantic lookup: original + a version with correction/negation words stripped. */
+  private async searchAll(query: string, context: MemoryRequestContext): Promise<MemoryItem[]> {
+    const queries = new Set<string>([String(query || "").trim()]);
+    const stripped = String(query || "")
+      .replace(/记住|请记住|记得|我们|这个|项目|决定|改成|换成|迁移到|换成了|改用|不对|错了|不是这样|记错了|已经不用|不再是|不要|别用/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (stripped && stripped !== query) queries.add(stripped);
+    const seen = new Map<string, MemoryItem>();
+    for (const q of queries) {
+      const response = await this.client.search(q, this.config.recallLimit);
+      if (response?.code !== 0) continue;
+      const items = contextItems(response.data, context.identity.userId, context.identity.workspaceId || this.config.groupId, context.identity.tenantId);
+      for (const item of items) {
+        const key = String(item.id || item.content || "");
+        if (key && !seen.has(key)) seen.set(key, item);
+      }
+    }
+    return filterRecall([...seen.values()], context).items;
+  }
+
   async remember(content: string, options?: { kind?: string; sessionId?: string; context?: MemoryRequestContext }): Promise<CaptureResult> {
     if (options?.context && !authorize(options.context, "remember").allowed) return { accepted: false, count: 0, backend: this.id, error: "permission-denied:remember" };
     const candidate = extractCandidates({ text: content, identity: options?.context?.identity || localIdentity(), purpose: options?.context?.purpose || "coding", sessionId: options?.sessionId, policyVersion: options?.context?.policyVersion });
@@ -290,11 +307,7 @@ export class VikingMemoryProvider implements MemoryProvider {
     // a remembered fact that contradicts an existing memory becomes a pending
     // review instead of silently writing a second record.
     if (options?.context) {
-      const gate = await gateCapture(content, options.context.identity, options.context, async (query) => {
-        const response = await this.client.search(query, this.config.recallLimit);
-        const items = response?.code === 0 ? contextItems(response.data, options.context!.identity.userId, options.context!.identity.workspaceId || this.config.groupId, options.context!.identity.tenantId) : [];
-        return filterRecall(items, options.context!).items;
-      }, "user", this.arbiter);
+      const gate = await gateCapture(content, options.context.identity, options.context, async (query) => this.searchAll(query, options.context!), "user", this.arbiter);
       if (gate.lifecycle?.decision === "conflict") {
         const conflictRecord = gate.extraction.candidates[0];
         this.reviewQueue.push({
