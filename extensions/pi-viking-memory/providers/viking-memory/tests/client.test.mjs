@@ -1,4 +1,4 @@
-import test from "node:test";
+import { test } from "vitest";
 import assert from "node:assert/strict";
 import { VikingMemoryClient } from "../client.ts";
 import { VikingMemoryProvider } from "../provider.ts";

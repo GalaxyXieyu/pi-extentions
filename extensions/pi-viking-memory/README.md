@@ -89,8 +89,9 @@ OpenViking 使用 `OPENVIKING_URL`、`OPENVIKING_API_KEY` 或本地安全 `ovcli
 它是工具的一个可选 `renderResult` 钩子；不想要时回到纯文本只需不传该字段（或注释 `tools.ts` 里的 `renderResult: createMemoryCardRenderer()`）。
 
 ```bash
-node ./extensions/pi-viking-memory/tests/run-tests.mjs
-node ./tests/run-all.mjs
+pnpm test
+# 或在仓库根目录执行全部测试
+pnpm --dir ../.. test
 ```
 
 远端测试数据和本地 runtime 配置不由插件自动删除；测试 marker 和清理边界见 `verification/`。

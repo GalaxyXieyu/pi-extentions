@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.3 - 2026-08-25
+
+### Fixes
+
+- Viking recall returned 0 items after a successful remember: `get_context` returns bucket-shaped `context_parts` (events[]/profiles[]/messages[]) but `contextItems` expected flat keys. Added flattening before parsing — recall now returns search hits.
+
 ## 0.2.2 - 2026-08-25
 
 ### Features

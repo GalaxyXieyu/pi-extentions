@@ -55,7 +55,7 @@ export class VikingMemoryProvider implements MemoryProvider {
     const response = await this.client.getContext(request.sessionId || `pi_${Date.now()}`, request.query, { scoreThreshold: this.config.scoreThreshold });
     if (!response || response.code !== 0) return { backend: this.id, items: [], block: null, raw: response };
     const context = response.data ?? null;
-    const items = contextItems(context, request.context?.identity.userId || this.config.userId, request.context?.identity.workspaceId || this.config.groupId, request.context?.identity.tenantId || "local");
+    const items = contextItems(flattenContextParts(context), request.context?.identity.userId || this.config.userId, request.context?.identity.workspaceId || this.config.groupId, request.context?.identity.tenantId || "local");
     const filtered = request.context ? filterRecall(items, request.context) : { items, dropped: 0 };
     const reranked = rerankRecall(filtered.items, request.query);
     const historyById = request.context?.identity ? memoryHistoryById(request.context.identity) : new Map<string, string[]>();
@@ -303,6 +303,32 @@ function normalizeMemoryKind(value: unknown, fallback: string): string {
 function firstString(value: unknown, fallback = ""): string {
   if (Array.isArray(value)) return firstString(value[0], fallback);
   return typeof value === "string" && value ? value : fallback;
+}
+
+/**
+ * get_context returns bucket-shaped `context_parts` (events[] / profiles[] /
+ * messages[]), while contextItems understands flat keys. Flatten before parse.
+ */
+function flattenContextParts(value: any): any {
+  if (!value || typeof value !== "object") return value;
+  if (!Array.isArray(value.context_parts)) return value;
+  const merged: Record<string, unknown> = { ...value };
+  const events: unknown[] = [];
+  const profiles: unknown[] = [];
+  const messages: unknown[] = [];
+  for (const part of value.context_parts) {
+    if (!part || typeof part !== "object") continue;
+    if (Array.isArray(part.events)) events.push(...part.events);
+    if (Array.isArray(part.profiles)) profiles.push(...part.profiles);
+    if (Array.isArray(part.profile)) profiles.push(...part.profile);
+    if (Array.isArray(part.messages)) messages.push(...part.messages);
+    if (Array.isArray(part.short_term_memory)) messages.push(...part.short_term_memory);
+  }
+  merged.events = events;
+  merged.profile = profiles;
+  merged.messages = messages;
+  return merged;
+}
 }
 
 function contextItems(value: any, fallbackUserId = "", fallbackGroupId = "", fallbackTenantId = "local"): MemoryItem[] {

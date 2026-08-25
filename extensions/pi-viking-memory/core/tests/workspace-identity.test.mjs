@@ -1,4 +1,4 @@
-import test from "node:test";
+import { test } from "vitest";
 import assert from "node:assert/strict";
 import { canonicalizeGitRemote, GLOBAL_MEMORY_GROUP, resolveWorkspaceIdentity } from "../workspace-identity.ts";
 

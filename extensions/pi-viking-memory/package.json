@@ -1,6 +1,6 @@
 {
   "name": "@galaxyxieyu/pi-viking-memory",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "A unified Pi memory extension for Viking Memory and OpenViking with workspace isolation, global preferences, lifecycle controls, audit, and TUI memory cards.",
   "license": "MIT",
   "type": "module",
@@ -31,6 +31,9 @@
     "providers/viking-memory/config.json",
     "docs/**/*.md"
   ],
+  "scripts": {
+    "test": "vitest run --root ../.. --config vitest.config.ts"
+  },
   "pi": {
     "extensions": [
       "./index.ts"
