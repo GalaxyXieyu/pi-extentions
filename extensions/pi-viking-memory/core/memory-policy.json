@@ -28,7 +28,7 @@
     },
     "coding": {
       "priority": ["project", "decision", "workflow", "experience", "event", "preference", "resource"],
-      "quotas": { "project": 3, "decision": 3, "workflow": 2, "experience": 3, "event": 1, "preference": 1, "resource": 2 }
+      "quotas": { "project": 3, "decision": 3, "workflow": 2, "experience": 3, "event": 5, "preference": 1, "resource": 2 }
     }
   },
   "kinds": {

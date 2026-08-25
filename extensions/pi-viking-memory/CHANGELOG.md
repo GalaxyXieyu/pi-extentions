@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.4 - 2026-08-25
+
+### Fixes
+
+- Recall merged get_context with /api/memory/search hits so server-truncated events still reach the model; normalized `result_list` + `context_parts` shapes in `flattenContextParts`; raised coding event quota 1→5 after e2e showed remembered facts being cut by the policy quota.
+
 ## 0.2.3 - 2026-08-25
 
 ### Fixes

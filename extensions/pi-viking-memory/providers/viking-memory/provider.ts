@@ -52,10 +52,29 @@ export class VikingMemoryProvider implements MemoryProvider {
   }
 
   async recall(request: RecallRequest): Promise<RecallResult> {
-    const response = await this.client.getContext(request.sessionId || `pi_${Date.now()}`, request.query, { scoreThreshold: this.config.scoreThreshold });
-    if (!response || response.code !== 0) return { backend: this.id, items: [], block: null, raw: response };
-    const context = response.data ?? null;
-    const items = contextItems(flattenContextParts(context), request.context?.identity.userId || this.config.userId, request.context?.identity.workspaceId || this.config.groupId, request.context?.identity.tenantId || "local");
+    const sessionId = request.sessionId || `pi_${Date.now()}`;
+    const userId = request.context?.identity.userId || this.config.userId;
+    const groupId = request.context?.identity.workspaceId || this.config.groupId;
+    const tenantId = request.context?.identity.tenantId || "local";
+
+    // Primary: get_context (short-term context + service-assembled parts ... but
+    // the server may cut the events bucket. Merge the full /api/memory/search
+    // hits below so truncated memories still reach the model.
+    const response = await this.client.getContext(sessionId, request.query, { scoreThreshold: this.config.scoreThreshold });
+    let items: MemoryItem[] = response && response.code === 0
+      ? contextItems(flattenContextParts(response.data ?? null), userId, groupId, tenantId)
+      : [];
+
+    try {
+      const searchRes = await this.client.search(request.query, this.config.recallLimit);
+      if (searchRes?.code === 0) {
+        const extra = contextItems(flattenContextParts(searchRes.data), userId, groupId, tenantId);
+        items = mergeItems(items, extra);
+      }
+    } catch {
+      // recall must never break the turn; get_context rows already covered us
+    }
+
     const filtered = request.context ? filterRecall(items, request.context) : { items, dropped: 0 };
     const reranked = rerankRecall(filtered.items, request.query);
     const historyById = request.context?.identity ? memoryHistoryById(request.context.identity) : new Map<string, string[]>();
@@ -311,24 +330,52 @@ function firstString(value: unknown, fallback = ""): string {
  */
 function flattenContextParts(value: any): any {
   if (!value || typeof value !== "object") return value;
-  if (!Array.isArray(value.context_parts)) return value;
   const merged: Record<string, unknown> = { ...value };
   const events: unknown[] = [];
   const profiles: unknown[] = [];
   const messages: unknown[] = [];
-  for (const part of value.context_parts) {
-    if (!part || typeof part !== "object") continue;
-    if (Array.isArray(part.events)) events.push(...part.events);
-    if (Array.isArray(part.profiles)) profiles.push(...part.profiles);
-    if (Array.isArray(part.profile)) profiles.push(...part.profile);
-    if (Array.isArray(part.messages)) messages.push(...part.messages);
-    if (Array.isArray(part.short_term_memory)) messages.push(...part.short_term_memory);
+
+  // /api/memory/search returns result_list (flat); get_context returns
+  // context_parts buckets. Normalize both shapes into flat keys.
+  for (const key of ["result_list", "events", "event", "event_memory", "event_memories"]) {
+    if (Array.isArray(value[key])) events.push(...value[key]);
   }
+  for (const key of ["profiles", "profile", "profile_memory", "profile_memories"]) {
+    if (Array.isArray(value[key])) profiles.push(...value[key]);
+  }
+  for (const key of ["messages", "short_term_memory", "conversation"]) {
+    if (Array.isArray(value[key])) messages.push(...value[key]);
+  }
+
+  if (Array.isArray(value.context_parts)) {
+    for (const part of value.context_parts) {
+      if (!part || typeof part !== "object") continue;
+      if (Array.isArray(part.events)) events.push(...part.events);
+      if (Array.isArray(part.profiles)) profiles.push(...part.profiles);
+      if (Array.isArray(part.profile)) profiles.push(...part.profile);
+      if (Array.isArray(part.messages)) messages.push(...part.messages);
+      if (Array.isArray(part.short_term_memory)) messages.push(...part.short_term_memory);
+    }
+  }
+
   merged.events = events;
   merged.profile = profiles;
   merged.messages = messages;
   return merged;
 }
+}
+
+/** Merge two item lists deduping by id (fallback: content), keeping higher scores. */
+function mergeItems(base: MemoryItem[], extra: MemoryItem[]): MemoryItem[] {
+  if (!extra.length) return base;
+  const byKey = new Map<string, MemoryItem>();
+  for (const item of [...base, ...extra]) {
+    const key = String(item.id || item.content || "").slice(0, 200);
+    if (!key) continue;
+    const existing = byKey.get(key);
+    if (!existing || (item.score ?? 0) > (existing.score ?? 0)) byKey.set(key, item);
+  }
+  return [...byKey.values()].sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
 }
 
 function contextItems(value: any, fallbackUserId = "", fallbackGroupId = "", fallbackTenantId = "local"): MemoryItem[] {
