@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.9 - 2026-08-25
+
+### Fixes
+
+- Cross-kind correction matching: sentences like "记住…改成 GitHub Actions" (profile) now collide with the older "…只用 Jenkins" record (event) instead of silently writing a second memory — the pair goes to the conflict gate and TUI confirmation.
+
 ## 0.2.8 - 2026-08-25
 
 ### Fixes

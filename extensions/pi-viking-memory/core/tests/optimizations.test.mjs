@@ -205,3 +205,21 @@ test("arbitration is triggered after rules flag a conflict", async () => {
   assert.equal((await gateCapture("包管理采用 pnpm", identity, preserveCtx, async () => existing, "agent", async () => null)).lifecycle?.decision, "conflict");
   delete process.env.PI_MEMORY_LIFECYCLE_FILE;
 });
+
+test("correction sentence matches cross-kind target and becomes conflict", async () => {
+  process.env.PI_MEMORY_LIFECYCLE_FILE = ":memory:" + Math.random();
+  const { gateCapture } = await import("../runtime.ts");
+  const { localIdentity, requestContext } = await import("../contracts.ts");
+  const identity = localIdentity({ userId: "u1", workspaceId: "ws" });
+  const ctx = requestContext(identity);
+  // 云端常见形态：旧句 kind=event（workspace），新纠错句 kind=profile（user）
+  const existing = [{ id: "e1", kind: "event", scope: "workspace", content: "这个项目的部署方式只用 Jenkins", metadata: { user_id: "u1", tenant_id: "local", workspace_id: "ws", status: "active" } }];
+  const gate = await gateCapture(
+    "记住，我们把这个项目的部署方式改成 GitHub Actions",
+    identity, ctx, async () => existing, "user",
+    async () => null, // arbiter 不可用 → 必须回退 conflict
+  );
+  assert.equal(gate.lifecycle?.decision, "conflict");
+  assert.equal(gate.lifecycle?.target?.id, "e1");
+  delete process.env.PI_MEMORY_LIFECYCLE_FILE;
+});

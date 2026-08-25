@@ -9,7 +9,7 @@ import { getLifecycleStore, lifecycleFingerprint, type LifecycleLedgerEntry } fr
 import { GLOBAL_MEMORY_GROUP } from "./workspace-identity.js";
 import { extractMemories, llmEndpoint, llmExtractionEnabled, llmModel, type LlmCompleteFn } from "./llm-extractor.js";
 import { scanMemoryContent } from "./content-scanner.js";
-import { classify } from "./candidate-extractor.js";
+import { classify, correctionSignal } from "./candidate-extractor.js";
 import type { MemoryKind } from "./contracts.js";
 import { consolidateLocal, type ConsolidationFinding } from "./consolidation.js";
 import type { ConflictArbiter } from "./conflict-arbiter.js";
@@ -74,11 +74,26 @@ export async function gateCapture(text: string, identity: MemoryIdentity, contex
   const candidate = extraction.candidates[0];
   if (!candidate) return { allowed: true, writeMode: "session", reason: "no-durable-candidate", context, extraction };
   const existing = await lookup(candidate.summary);
-  const target = existing.find((item) => item.kind === candidate.kind && (item.scope || "workspace") === candidate.scope);
+  // Primary target: same kind AND same scope. Correction sentences (改成/不对)
+  // frequently classify to a different kind than the memory they update (e.g.
+  // the store may keep "决定...Jenkins" as an event while "记住...改成" is a
+  // profile). Allow cross-kind matching for correction sentences so the
+  // conflict gate and the LLM arbiter still see the pair.
+  let target = existing.find((item) => item.kind === candidate.kind && (item.scope || "workspace") === candidate.scope);
+  const crossKind = !target && correctionSignal(text) && existing.length > 0;
+  if (crossKind && !target) {
+    target = existing.find((item) => (item.scope || "workspace") === candidate.scope) ?? existing[0];
+  }
   const candidateRecord = candidate as unknown as MemoryRecord;
   const fingerprint = lifecycleFingerprint(candidateRecord);
   const persisted = getLifecycleStore().find(fingerprint);
-  let lifecycle = decideMerge(candidateRecord, target ? recordFromItem(target, context) : persisted?.record);
+  let lifecycle = target ? decideMerge(candidateRecord, recordFromItem(target, context)) : decideMerge(candidateRecord, persisted?.record);
+  if (crossKind && lifecycle.decision === "create") {
+    // Different kind collided on a correction signal: never silently create a
+    // second record — send it through conflict (arbiter may resolve, default
+    // preserve-and-confirm keeps it for human confirmation).
+    lifecycle = { ...lifecycle, decision: "conflict", reason: "correction-cross-kind-match", target: recordFromItem(target as MemoryItem, context) };
+  }
   if (context.lifecycle?.conflictPolicy === "preserve-and-confirm" && ["merge", "supersede"].includes(lifecycle.decision)) {
     lifecycle = { ...lifecycle, decision: "conflict", reason: "configured preserve-and-confirm" };
   }
