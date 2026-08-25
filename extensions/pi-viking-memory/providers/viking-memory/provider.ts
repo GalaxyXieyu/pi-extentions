@@ -363,7 +363,6 @@ function flattenContextParts(value: any): any {
   merged.messages = messages;
   return merged;
 }
-}
 
 /** Merge two item lists deduping by id (fallback: content), keeping higher scores. */
 function mergeItems(base: MemoryItem[], extra: MemoryItem[]): MemoryItem[] {

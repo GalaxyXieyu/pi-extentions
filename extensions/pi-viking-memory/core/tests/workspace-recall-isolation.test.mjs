@@ -1,4 +1,4 @@
-import { test } from "vitest";
+import test from "node:test";
 import assert from "node:assert/strict";
 import { localIdentity, requestContext } from "../contracts.ts";
 import { filterRecall } from "../runtime.ts";

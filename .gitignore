@@ -7,3 +7,4 @@
 
 # PM local cache
 .planning/
+node_modules/
