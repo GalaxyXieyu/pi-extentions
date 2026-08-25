@@ -10,6 +10,7 @@ import { lifecycleFingerprint } from "../../core/lifecycle-store.js";
 import { authorize, curateWithLlm, filterRecall, gateCapture, persistLifecycleRecord, persistLifecycleTransition, memoryHistoryById } from "../../core/runtime.js";
 import { llmExtractionEnabled } from "../../core/llm-extractor.js";
 import type { LlmCompleteFn } from "../../core/llm-extractor.js";
+import { makeConflictArbiter, type ConflictArbiter } from "../../core/conflict-arbiter.js";
 import { rerankRecall } from "../../core/recall-rerank.js";
 import { CurationQueue } from "../../core/curation-queue.js";
 import type { MemoryRequestContext, MemoryRecord } from "../../core/contracts.js";
@@ -39,10 +40,12 @@ export class OpenVikingProvider implements MemoryProvider {
 
   private readonly curationQueue = new CurationQueue();
   private pilotComplete: LlmCompleteFn | null = null;
+  private arbiter: ConflictArbiter = makeConflictArbiter(null);
 
   /** Inherit pi's provider/auth for the LLM funnel (zero standalone config). */
   setPilotComplete(complete: LlmCompleteFn | null): void {
     this.pilotComplete = complete;
+    this.arbiter = makeConflictArbiter(complete);
   }
 
   constructor(client: OVClient, config: OVConfig) {
@@ -99,7 +102,7 @@ export class OpenVikingProvider implements MemoryProvider {
       let gateHandled = false;
 
       if (context && ruleHit) {
-        const gate = await gateCapture(message.content, context.identity, context, async (query) => this.search(query, { limit: this.config.recallLimit, context }), message.role === "assistant" ? "agent" : "user");
+        const gate = await gateCapture(message.content, context.identity, context, async (query) => this.search(query, { limit: this.config.recallLimit, context }), message.role === "assistant" ? "agent" : "user", this.arbiter);
         const decision = gate.lifecycle?.decision || "capture-only";
         decisions.push({ decision, reason: gate.reason, kind: gate.extraction.candidates[0]?.kind });
         if (gate.lifecycle?.decision === "conflict") {

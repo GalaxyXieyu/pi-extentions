@@ -54,10 +54,10 @@ export function extractCandidates(input: CandidateInput): CandidateExtractionRes
 }
 
 export function classify(text: string, purpose: "chat" | "coding"): MemoryKind | null {
-  if (/不要|别用|改用|no,? use|correction|纠正|不对|错了|不是这样|记错了|已经不用|不再是|现在(?:改|用|是)/i.test(text)) return "preference";
+  if (/不要|别用|改用|改成|换成|迁移到|换成了|no,? use|correction|纠正|不对|错了|不是这样|记错了|已经不用|不再是|现在(?:改|用|是)/i.test(text)) return "preference";
   if (/根因|修复|failed|failure|错误|报错|验证通过|fixed/i.test(text)) return "experience";
   if (/架构|决定|decision|选择.*方案|采用/i.test(text)) return "decision";
-  if (/请记住|remember|偏好|喜欢|prefer|profile/i.test(text)) return "profile";
+  if (/请记住|记住|记得|remember|偏好|喜欢|prefer|profile/i.test(text)) return "profile";
   if (/完成|开始|发生|在.*进行了|做了|执行|重构|迁移|上线|提交了/i.test(text)) return "event";
   if (purpose === "coding" && /package\.json|测试命令|目录|workspace|项目|project|npm |pnpm |docker/i.test(text)) return "project";
   return null;

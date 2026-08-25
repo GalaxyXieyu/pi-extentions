@@ -148,3 +148,54 @@ test("llm funnel enabled without endpoint/pilot falls back to rules", async () =
   assert.equal(result.handled, false);
   delete process.env.PI_MEMORY_LLM_ENABLED;
 });
+
+test("conflict arbiter parses LLM relations and falls back to null", async () => {
+  const { parseArbitration, makeConflictArbiter } = await import("../conflict-arbiter.ts");
+  const ok = parseArbitration('{"relation":"supersede","confidence":0.9,"reason":"x","target_id":"m1"}');
+  assert.equal(ok?.relation, "supersede");
+  assert.equal(ok?.confidence, 0.9);
+  assert.equal(parseArbitration('not-json'), null);
+  assert.equal(parseArbitration('{"relation":"maybe"}'), null);
+
+  const noLlm = makeConflictArbiter(null);
+  assert.equal(await noLlm("x", []), null);
+  const failing = makeConflictArbiter(async () => { throw new Error("boom"); });
+  assert.equal(await failing("x", []) , null);
+});
+
+test("conflict arbiter parses LLM relations and falls back safely", async () => {
+  const { parseArbitration, makeConflictArbiter } = await import("../conflict-arbiter.ts");
+  assert.deepEqual(parseArbitration('{"relation":"supersede","confidence":0.9,"target_id":"m1"}').relation, "supersede");
+  assert.equal(parseArbitration('```json\n{"relation":"duplicate","confidence":0.8}\n```').relation, "duplicate");
+  assert.equal(parseArbitration("not json"), null);
+  assert.equal(parseArbitration('{"relation":"maybe","confidence":0.9}'), null);
+
+  const nullArbiter = makeConflictArbiter(null);
+  assert.equal(await nullArbiter("x", []), null);
+  const failingArbiter = makeConflictArbiter(async () => { throw new Error("boom"); });
+  assert.equal(await failingArbiter("x", []), null);
+});
+
+
+test("arbitration is triggered after rules flag a conflict", async () => {
+  process.env.PI_MEMORY_LIFECYCLE_FILE = ":memory:" + Math.random();
+  const { gateCapture } = await import("../runtime.ts");
+  const { localIdentity, requestContext } = await import("../contracts.ts");
+  const identity = localIdentity({ userId: "u1", workspaceId: "ws" });
+  const ctx = requestContext(identity);
+  // existing 与候选同 kind=preference、同 scope=user，内容不同 -> 规则层 high+active -> supersede -> preserve-and-confirm -> conflict
+  const existing = [{ id: "m1", kind: "preference", scope: "user", content: "依赖管理使用 npm", metadata: { user_id: "u1", tenant_id: "local", workspace_id: "ws", status: "active" } }];
+  const run = (relation, conf = 0.9) => gateCapture(
+    "项目依赖管理改成 pnpm", identity, ctx, async () => existing, "user",
+    async () => ({ relation, confidence: conf }),
+  );
+  assert.equal((await run("supplement")).lifecycle?.decision, "merge");
+  assert.equal((await run("duplicate")).lifecycle?.decision, "skip");
+  assert.equal((await run("unrelated")).lifecycle?.decision, "create");
+  assert.equal((await run("supersede", 0.8)).lifecycle?.decision, "supersede");
+  assert.equal((await run("supersede", 0.3)).lifecycle?.decision, "conflict");
+  assert.equal((await run("conflict")).lifecycle?.decision, "conflict");
+  // 返回 null 的 arbiter 回退规则
+  assert.equal((await gateCapture("项目依赖管理改成 pnpm", identity, ctx, async () => existing, "user", async () => null)).lifecycle?.decision, "conflict");
+  delete process.env.PI_MEMORY_LIFECYCLE_FILE;
+});

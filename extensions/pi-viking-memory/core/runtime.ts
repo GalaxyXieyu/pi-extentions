@@ -12,6 +12,7 @@ import { scanMemoryContent } from "./content-scanner.js";
 import { classify } from "./candidate-extractor.js";
 import type { MemoryKind } from "./contracts.js";
 import { consolidateLocal, type ConsolidationFinding } from "./consolidation.js";
+import type { ConflictArbiter } from "./conflict-arbiter.js";
 
 export const memoryStats: StatsProvider = new FileStatsProvider();
 export const memoryPolicy = new MemoryPolicyEngine();
@@ -59,8 +60,7 @@ function recordFromItem(item: MemoryItem, context: MemoryRequestContext): Memory
   };
 }
 
-export async function gateCapture(text: string, identity: MemoryIdentity, context: MemoryRequestContext, lookup: (query: string) => Promise<MemoryItem[]> = async () => [], sourceType: "user" | "agent" | "system" = "user"): Promise<RuntimeGateResult> {
-  const auth = authorize(context, "capture");
+export async function gateCapture(text: string, identity: MemoryIdentity, context: MemoryRequestContext, lookup: (query: string) => Promise<MemoryItem[]> = async () => [], sourceType: "user" | "agent" | "system" = "user", arbiter?: ConflictArbiter): Promise<RuntimeGateResult> {  const auth = authorize(context, "capture");
   const extraction = extractCandidates({ text, identity, purpose: context.purpose, sessionId: identity.sessionId, policyVersion: context.policyVersion, sourceType });
   if (!auth.allowed) {
     auditRecords.push({ kind: "session", scope: "session", status: "rejected", confidence: "high", content: "capture denied", owner: { tenantId: identity.tenantId, userId: identity.userId, agentId: identity.agentId }, source: { sessionId: identity.sessionId, requestId: context.requestId, observedAt: new Date().toISOString() }, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), policyVersion: context.policyVersion, metadata: { decision: "reject", reason: auth.reason } } as MemoryRecord);
@@ -81,6 +81,26 @@ export async function gateCapture(text: string, identity: MemoryIdentity, contex
   let lifecycle = decideMerge(candidateRecord, target ? recordFromItem(target, context) : persisted?.record);
   if (context.lifecycle?.conflictPolicy === "preserve-and-confirm" && ["merge", "supersede"].includes(lifecycle.decision)) {
     lifecycle = { ...lifecycle, decision: "conflict", reason: "configured preserve-and-confirm" };
+  }
+
+  // Second-stage arbitration: when the rules flag a conflict, an LLM (when
+  // available) classifies the actual relation. Safe directions only —
+  // duplicate→skip, supplement→merge, supersede(conf≥0.75)→supersede,
+  // unrelated→create, everything else stays conflict for human review.
+  if (arbiter && lifecycle.decision === "conflict" && lifecycle.target) {
+    const arbitration = await arbiter(candidateRecord.content, existing);
+    if (arbitration) {
+      if (arbitration.relation === "duplicate") {
+        lifecycle = { ...lifecycle, decision: "skip", reason: `llm-arbitration:${arbitration.relation}` };
+      } else if (arbitration.relation === "supplement") {
+        lifecycle = { ...lifecycle, decision: "merge", reason: `llm-arbitration:${arbitration.relation}` };
+      } else if (arbitration.relation === "supersede" && arbitration.confidence >= 0.75) {
+        lifecycle = { ...lifecycle, decision: "supersede", reason: `llm-arbitration:${arbitration.relation}` };
+      } else if (arbitration.relation === "unrelated") {
+        lifecycle = { ...lifecycle, decision: "create", reason: `llm-arbitration:${arbitration.relation}` };
+      }
+      // conflict / low-confidence stays conflict -> pending_review + human
+    }
   }
   if (!["create"].includes(lifecycle.decision)) {
     if (["merge", "supersede"].includes(lifecycle.decision)) {

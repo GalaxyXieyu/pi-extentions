@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.5 - 2026-08-25
+
+### Features
+
+- LLM conflict arbitration: rule-triggered conflicts are refined by an LLM\n  classification (duplicate/supplement/supersede/conflict/unrelated) —\n  duplicate→skip, supplement→merge, high-confidence supersede→supersede,\n  unrelated→create, rest falls back to pending_review + human review.\n  Zero-config: inherits the pi session's model/auth through the pilot\n  completion hook; any LLM failure falls back to plain rules.
+- `viking_memory_remember` now runs the same conflict gate as automatic\n  capture — a remembered fact that contradicts an existing memory becomes\n  a pending review instead of silently writing a second record.
+
+### Fixes
+
+- Conflict raised by the remember tool now flows into turn_end so the TUI\n  confirmation prompt (MEMORY_REVIEW_MODE=confirm) fires.
+
 ## 0.2.4 - 2026-08-25
 
 ### Fixes

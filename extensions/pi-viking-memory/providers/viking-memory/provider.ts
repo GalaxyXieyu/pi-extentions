@@ -10,6 +10,7 @@ import { scanMemoryContent } from "../../core/content-scanner.js";
 import { authorize, curateWithLlm, filterRecall, gateCapture, persistLifecycleRecord, persistLifecycleTransition, backfillLifecycleRemoteId, memoryHistoryById } from "../../core/runtime.js";
 import { llmExtractionEnabled } from "../../core/llm-extractor.js";
 import type { LlmCompleteFn } from "../../core/llm-extractor.js";
+import { makeConflictArbiter, type ConflictArbiter } from "../../core/conflict-arbiter.js";
 import { lifecycleFingerprint } from "../../core/lifecycle-store.js";
 import { rerankRecall } from "../../core/recall-rerank.js";
 import { CurationQueue } from "../../core/curation-queue.js";
@@ -33,10 +34,14 @@ export class VikingMemoryProvider implements MemoryProvider {
   private readonly config: VikingMemoryConfig;
   private readonly curationQueue = new CurationQueue();
   private pilotComplete: LlmCompleteFn | null = null;
+  private arbiter: ConflictArbiter = makeConflictArbiter(null);
+  /** Conflicts raised by the explicit remember path, flushed into capture() so the turn_end HITL prompt fires. */
+  private readonly reviewQueue: Array<{ fingerprint?: string; kind: string; candidate: string; targetId?: string; targetContent?: string }> = [];
 
   /** Inherit pi's provider/auth for the LLM funnel (zero standalone config). */
   setPilotComplete(complete: LlmCompleteFn | null): void {
     this.pilotComplete = complete;
+    this.arbiter = makeConflictArbiter(complete);
   }
 
   constructor(client: VikingMemoryClient, config: VikingMemoryConfig) {
@@ -89,7 +94,7 @@ export class VikingMemoryProvider implements MemoryProvider {
 
   async capture(sessionId: string, messages: import("../../core/provider.js").MemoryMessage[], context?: MemoryRequestContext): Promise<CaptureResult> {
     const decisions: Array<{ decision: string; reason: string; kind?: string }> = [];
-    const conflicts: Array<{ fingerprint?: string; kind: string; candidate: string; targetId?: string; targetContent?: string }> = [];
+    const conflicts: Array<{ fingerprint?: string; kind: string; candidate: string; targetId?: string; targetContent?: string }> = [...this.reviewQueue.splice(0, this.reviewQueue.length)];
     const sessionMessages: import("../../core/provider.js").MemoryMessage[] = [];
     const createdCandidates: Array<import("../../core/contracts.js").MemoryRecord> = [];
     let rejected = 0;
@@ -110,7 +115,7 @@ export class VikingMemoryProvider implements MemoryProvider {
         const response = await this.client.search(query, this.config.recallLimit);
         const items = response?.code === 0 ? contextItems(response.data, context.identity.userId, context.identity.workspaceId || this.config.groupId, context.identity.tenantId) : [];
         return filterRecall(items, context).items;
-      }, message.role === "assistant" ? "agent" : "user");
+      }, message.role === "assistant" ? "agent" : "user", this.arbiter);
       const decision = gate.lifecycle?.decision || "capture-only";
       if (decision === "create" && gate.extraction.candidates[0]) createdCandidates.push(gate.extraction.candidates[0] as unknown as import("../../core/contracts.js").MemoryRecord);
       decisions.push({ decision, reason: gate.reason, kind: gate.extraction.candidates[0]?.kind });
@@ -277,9 +282,39 @@ export class VikingMemoryProvider implements MemoryProvider {
   }
 
   async remember(content: string, options?: { kind?: string; sessionId?: string; context?: MemoryRequestContext }): Promise<CaptureResult> {
-    const candidate = extractCandidates({ text: content, identity: options?.context?.identity || localIdentity(), purpose: options?.context?.purpose || "coding", sessionId: options?.sessionId, policyVersion: options?.context?.policyVersion });
     if (options?.context && !authorize(options.context, "remember").allowed) return { accepted: false, count: 0, backend: this.id, error: "permission-denied:remember" };
+    const candidate = extractCandidates({ text: content, identity: options?.context?.identity || localIdentity(), purpose: options?.context?.purpose || "coding", sessionId: options?.sessionId, policyVersion: options?.context?.policyVersion });
     if (candidate.rejected.length) return { accepted: false, count: 0, backend: this.id, error: `memory candidate rejected: ${candidate.rejected[0].reason}`, raw: candidate };
+
+    // Explicit remember must hit the same conflict gate as automatic capture:
+    // a remembered fact that contradicts an existing memory becomes a pending
+    // review instead of silently writing a second record.
+    if (options?.context) {
+      const gate = await gateCapture(content, options.context.identity, options.context, async (query) => {
+        const response = await this.client.search(query, this.config.recallLimit);
+        const items = response?.code === 0 ? contextItems(response.data, options.context!.identity.userId, options.context!.identity.workspaceId || this.config.groupId, options.context!.identity.tenantId) : [];
+        return filterRecall(items, options.context!).items;
+      }, "user", this.arbiter);
+      if (gate.lifecycle?.decision === "conflict") {
+        const conflictRecord = gate.extraction.candidates[0];
+        this.reviewQueue.push({
+          fingerprint: conflictRecord ? lifecycleFingerprint(conflictRecord as MemoryRecord) : undefined,
+          kind: String(conflictRecord?.kind || ""),
+          candidate: String(conflictRecord?.summary || content).slice(0, 300),
+          targetId: gate.lifecycle?.target?.id,
+          targetContent: String(gate.lifecycle?.target?.content || "").slice(0, 300),
+        });
+        return {
+          accepted: false,
+          count: 0,
+          decisions: [{ decision: "conflict", reason: gate.reason, kind: conflictRecord?.kind as string | undefined }],
+          conflicts: [...this.reviewQueue],
+          backend: this.id,
+          error: "conflict-pending-review",
+        };
+      }
+    }
+
     const memory = candidate.candidates[0];
     const response = isGlobalPreference(memory?.kind)
       ? await this.client.addProfile(sanitizeSensitiveText(content))
