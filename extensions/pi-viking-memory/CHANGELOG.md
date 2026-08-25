@@ -1,10 +1,22 @@
 # Changelog
 
+## 0.2.7 - 2026-08-25
+
+### Fixes
+
+- Ship the dual-query conflict lookup (searchAll) that was missing from the
+  0.2.6 tarball; correction signals no longer steal memory kind on classify.
+
 ## 0.2.6 - 2026-08-25
 
 ### Fixes
 
-- Correction/update words (改成/换成/迁移到) no longer steal the memory kind\n  during classification — "记住...用 Jenkins" and "记住...改成 GitHub Actions"\n  now classify to the same kind so update conflicts are detected.\n- Conflict lookup now runs a dual query (original + correction-stripped text)\n  so the replaced memory is found even when the store is flooded with test\n  duplicates.
+- Correction/update words (改成/换成/迁移到) no longer steal the memory kind
+  during classification — "记住...用 Jenkins" and "记住...改成 GitHub Actions"
+  now classify to the same kind so update conflicts are detected.
+- Conflict lookup now runs a dual query (original + correction-stripped text)
+  so the replaced memory is found even when the store is flooded with test
+  duplicates.
 
 ## 0.2.5 - 2026-08-25
 

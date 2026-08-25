@@ -1,6 +1,6 @@
 {
   "name": "@galaxyxieyu/pi-viking-memory",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "description": "A unified Pi memory extension for Viking Memory and OpenViking with workspace isolation, global preferences, lifecycle controls, audit, and TUI memory cards.",
   "license": "MIT",
   "type": "module",

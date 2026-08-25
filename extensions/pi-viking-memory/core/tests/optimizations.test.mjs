@@ -184,9 +184,9 @@ test("arbitration is triggered after rules flag a conflict", async () => {
   const identity = localIdentity({ userId: "u1", workspaceId: "ws" });
   const ctx = requestContext(identity);
   // existing 与候选同 kind=preference、同 scope=user，内容不同 -> 规则层 high+active -> supersede -> preserve-and-confirm -> conflict
-  const existing = [{ id: "m1", kind: "preference", scope: "user", content: "依赖管理使用 npm", metadata: { user_id: "u1", tenant_id: "local", workspace_id: "ws", status: "active" } }];
+  const existing = [{ id: "m1", kind: "decision", scope: "workspace", content: "我们决定包管理用 npm", metadata: { user_id: "u1", tenant_id: "local", workspace_id: "ws", status: "active" } }];
   const run = (relation, conf = 0.9) => gateCapture(
-    "依赖管理不用 npm，改成 pnpm", identity, ctx, async () => existing, "user",
+    "我们决定包管理用 pnpm", identity, ctx, async () => existing, "user",
     async () => ({ relation, confidence: conf }),
   );
   assert.equal((await run("supplement")).lifecycle?.decision, "merge");
@@ -196,6 +196,6 @@ test("arbitration is triggered after rules flag a conflict", async () => {
   assert.equal((await run("supersede", 0.3)).lifecycle?.decision, "conflict");
   assert.equal((await run("conflict")).lifecycle?.decision, "conflict");
   // 返回 null 的 arbiter 回退规则
-  assert.equal((await gateCapture("依赖管理不用 npm，改成 pnpm", identity, ctx, async () => existing, "user", async () => null)).lifecycle?.decision, "conflict");
+  assert.equal((await gateCapture("我们决定包管理用 pnpm", identity, ctx, async () => existing, "user", async () => null)).lifecycle?.decision, "conflict");
   delete process.env.PI_MEMORY_LIFECYCLE_FILE;
 });
