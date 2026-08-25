@@ -1,0 +1,108 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { rerankRecall } from "../recall-rerank.ts";
+import { diceSimilarity, consolidateLocal } from "../consolidation.ts";
+import { localIdentity } from "../contracts.ts";
+import { getLifecycleStore, lifecycleFingerprint } from "../lifecycle-store.ts";
+import { CurationQueue } from "../curation-queue.ts";
+import { extractCandidates } from "../candidate-extractor.ts";
+
+test("rerankRecall boosts recent items for current-time queries", () => {
+  const items = [
+    { id: "old", kind: "project", content: "项目使用 npm", score: 0.9, timestamp: "2024-01-05T00:00:00Z", metadata: {} },
+    { id: "new", kind: "project", content: "项目使用 pnpm", score: 0.9, timestamp: "2026-08-01T00:00:00Z", metadata: {} },
+  ];
+  const nowQ = rerankRecall(structuredClone(items), "项目现在用的什么包管理器");
+  assert.equal(nowQ[0].id, "new");
+  const pastQ = rerankRecall(structuredClone(items), "项目当时用的什么包管理器");
+  assert.equal(pastQ[0].id, "old");
+});
+
+test("rerankRecall without temporal intent keeps order", () => {
+  const items = [
+    { id: "a", kind: "project", content: "x", score: 0.8, timestamp: "2020-01-01T00:00:00Z", metadata: {} },
+    { id: "b", kind: "project", content: "y", score: 0.5, timestamp: "2026-01-01T00:00:00Z", metadata: {} },
+  ];
+  assert.deepEqual(rerankRecall(items, "重构计划是什么"), items);
+});
+
+test("correction signals classify as high-confidence preference", () => {
+  const result = extractCandidates({
+    text: "不对，项目现在不用 npm 了，改成 pnpm",
+    identity: localIdentity({ userId: "u1", workspaceId: "ws" }),
+    purpose: "coding",
+    sourceType: "user",
+    sessionId: "s1",
+    policyVersion: 1,
+  });
+  assert.equal(result.candidates[0]?.kind, "preference");
+  assert.equal(result.candidates[0]?.confidence, "high");
+});
+
+test("implicit preference phrasing is a rule miss (long tail for LLM)", () => {
+  const result = extractCandidates({
+    text: "这套工具链太折腾了，新的一套顺手很多",
+    identity: localIdentity({ userId: "u1", workspaceId: "ws" }),
+    purpose: "coding",
+    sourceType: "user",
+    sessionId: "s1",
+    policyVersion: 1,
+  });
+  assert.equal(result.candidates.length, 0);
+});
+
+test("agent-inferred content gets medium confidence without explicit markers", () => {
+  const agent = extractCandidates({
+    text: "架构上这块采用事件溯源模式", identity: localIdentity({ userId: "u1" }), purpose: "coding",
+    sourceType: "agent", sessionId: "s", policyVersion: 1,
+  });
+  assert.equal(agent.candidates[0]?.kind, "decision");
+  assert.equal(agent.candidates[0]?.confidence, "medium");
+  const user = extractCandidates({
+    text: "架构上这块采用事件溯源模式", identity: localIdentity({ userId: "u1" }), purpose: "coding",
+    sourceType: "user", sessionId: "s", policyVersion: 1,
+  });
+  assert.equal(user.candidates[0]?.confidence, "high");
+});
+
+test("diceSimilarity measures near-duplicate facts", () => {
+  assert.ok(diceSimilarity("项目使用 pnpm 作为包管理器", "项目使用 pnpm 管理依赖") > 0.5);
+  assert.ok(diceSimilarity("今天下雨", "今天不下雨") < 0.5 || diceSimilarity("今天下雨", "部署到生产环境") < 0.1);
+  assert.equal(diceSimilarity("a", "aa"), 0);
+});
+
+test("consolidation promotes near-duplicate active records to pending_review", () => {
+  const store = getLifecycleStore();
+  const now = new Date().toISOString();
+  const mk = (content) => ({
+    kind: "project", scope: "workspace", status: "active", confidence: "medium", content,
+    owner: { tenantId: "local", userId: "u1", workspaceId: "ws" },
+    source: { observedAt: now }, createdAt: now, updatedAt: now, policyVersion: 1,
+  });
+  const r1 = mk("项目使用 pnpm 作为包管理器");
+  const r2 = mk("项目使用 pnpm 管理依赖，通过 lockfile 锁定");
+  store.upsert(lifecycleFingerprint(r1), r1, "remote-a", "remote-create");
+  store.upsert(lifecycleFingerprint(r2), r2, "remote-b", "remote-create");
+
+  const findings = consolidateLocal(localIdentity({ userId: "u1", workspaceId: "ws" }), 0.4);
+  assert.ok(findings.length >= 1);
+  assert.equal(findings[0].suggestion, "conflict");
+  assert.equal(findings[0].promoted, true);
+  const pending = store.all().filter((e) => e.record.status === "pending_review");
+  assert.ok(pending.length >= 1);
+});
+
+test("curation queue enqueues, thresholds on count, and requeues bounded", () => {
+  process.env.PI_MEMORY_LLM_BATCH_COUNT = "2";
+  const q = new CurationQueue();
+  q.enqueue({ role: "user", content: "a" });
+  assert.equal(q.shouldFlush(), false);
+  q.enqueue({ role: "user", content: "b" });
+  assert.equal(q.shouldFlush(), true);
+  const batch = q.takeBatch();
+  assert.equal(batch.length, 2);
+  assert.equal(q.size, 0);
+  q.requeue(batch, 3);
+  assert.equal(q.size, 0); // max attempts reached
+  delete process.env.PI_MEMORY_LLM_BATCH_COUNT;
+});

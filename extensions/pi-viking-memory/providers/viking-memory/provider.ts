@@ -6,7 +6,12 @@ import { buildRecallBlock } from "./recall.js";
 import { sanitizeSensitiveText } from "../../core/sensitive.mjs";
 import { extractCandidates } from "../../core/candidate-extractor.js";
 import { localIdentity } from "../../core/contracts.js";
-import { authorize, filterRecall, gateCapture, persistLifecycleRecord, persistLifecycleTransition, backfillLifecycleRemoteId } from "../../core/runtime.js";
+import { scanMemoryContent } from "../../core/content-scanner.js";
+import { authorize, curateWithLlm, filterRecall, gateCapture, persistLifecycleRecord, persistLifecycleTransition, backfillLifecycleRemoteId, memoryHistoryById } from "../../core/runtime.js";
+import { llmExtractionEnabled } from "../../core/llm-extractor.js";
+import { lifecycleFingerprint } from "../../core/lifecycle-store.js";
+import { rerankRecall } from "../../core/recall-rerank.js";
+import { CurationQueue } from "../../core/curation-queue.js";
 import type { MemoryRequestContext, MemoryRecord } from "../../core/contracts.js";
 
 export class VikingMemoryProvider implements MemoryProvider {
@@ -25,6 +30,7 @@ export class VikingMemoryProvider implements MemoryProvider {
 
   private readonly client: VikingMemoryClient;
   private readonly config: VikingMemoryConfig;
+  private readonly curationQueue = new CurationQueue();
 
   constructor(client: VikingMemoryClient, config: VikingMemoryConfig) {
     this.client = client;
@@ -44,17 +50,20 @@ export class VikingMemoryProvider implements MemoryProvider {
     const context = response.data ?? null;
     const items = contextItems(context, request.context?.identity.userId || this.config.userId, request.context?.identity.workspaceId || this.config.groupId, request.context?.identity.tenantId || "local");
     const filtered = request.context ? filterRecall(items, request.context) : { items, dropped: 0 };
+    const reranked = rerankRecall(filtered.items, request.query);
+    const historyById = request.context?.identity ? memoryHistoryById(request.context.identity) : new Map<string, string[]>();
     return {
       backend: this.id,
       purpose: request.purpose || "coding",
-      items: filtered.items,
-      block: formatRecall({ backend: this.id, items: filtered.items, maxChars: request.maxChars, purpose: request.purpose || "coding" } as any),
+      items: reranked,
+      block: formatRecall({ backend: this.id, items: reranked, maxChars: request.maxChars, purpose: request.purpose || "coding" } as any, { historyById }),
       raw: response,
     };
   }
 
   async capture(sessionId: string, messages: import("../../core/provider.js").MemoryMessage[], context?: MemoryRequestContext): Promise<CaptureResult> {
     const decisions: Array<{ decision: string; reason: string; kind?: string }> = [];
+    const conflicts: Array<{ fingerprint?: string; kind: string; candidate: string; targetId?: string; targetContent?: string }> = [];
     const sessionMessages: import("../../core/provider.js").MemoryMessage[] = [];
     const createdCandidates: Array<import("../../core/contracts.js").MemoryRecord> = [];
     let rejected = 0;
@@ -65,14 +74,31 @@ export class VikingMemoryProvider implements MemoryProvider {
         sessionMessages.push(message);
         continue;
       }
+      const preScan = scanMemoryContent(message.content);
+      if (preScan.action === "reject" || preScan.action === "threat") { rejected++; continue; }
+      const ruleCandidates = extractCandidates({ text: message.content, identity: context.identity, purpose: context.purpose, sourceType: message.role === "assistant" ? "agent" : "user", sessionId, policyVersion: context.policyVersion });
+      const ruleHit = ruleCandidates.candidates.length > 0;
+
+      if (ruleHit) {
       const gate = await gateCapture(message.content, context.identity, context, async (query) => {
         const response = await this.client.search(query, this.config.recallLimit);
         const items = response?.code === 0 ? contextItems(response.data, context.identity.userId, context.identity.workspaceId || this.config.groupId, context.identity.tenantId) : [];
         return filterRecall(items, context).items;
-      });
+      }, message.role === "assistant" ? "agent" : "user");
       const decision = gate.lifecycle?.decision || "capture-only";
       if (decision === "create" && gate.extraction.candidates[0]) createdCandidates.push(gate.extraction.candidates[0] as unknown as import("../../core/contracts.js").MemoryRecord);
       decisions.push({ decision, reason: gate.reason, kind: gate.extraction.candidates[0]?.kind });
+
+      if (gate.lifecycle?.decision === "conflict") {
+        const conflictRecord = gate.extraction.candidates[0];
+        conflicts.push({
+          fingerprint: conflictRecord ? lifecycleFingerprint(conflictRecord) : undefined,
+          kind: String(conflictRecord?.kind || ""),
+          candidate: String(conflictRecord?.summary || conflictRecord?.content || message.content || "").slice(0, 300),
+          targetId: gate.lifecycle?.target?.id,
+          targetContent: String(gate.lifecycle?.target?.content || "").slice(0, 300),
+        });
+      }
 
       if (!gate.allowed && gate.writeMode !== "lifecycle-action") {
         rejected++;
@@ -107,7 +133,7 @@ export class VikingMemoryProvider implements MemoryProvider {
             : await this.client.updateEvent(targetId, content)
           : null;
         if (!updated || updated.code !== 0 || !candidate || !target) {
-          return { accepted: false, count: lifecycleWrites, rejected, candidates: gate.extraction.candidates.length, decisions, backend: this.id, error: "lifecycle-action-deferred:no-updatable-remote-record", raw: gate };
+          return { accepted: false, count: lifecycleWrites, rejected, candidates: gate.extraction.candidates.length, decisions, conflicts, backend: this.id, error: "lifecycle-action-deferred:no-updatable-remote-record", raw: gate };
         }
         const next = { ...candidate, content, status: "active" as const, supersedes: target.id ? [target.id] : [] };
         persistLifecycleTransition(target, "superseded", `remote-${gate.lifecycle?.decision}`, target.id);
@@ -129,9 +155,36 @@ export class VikingMemoryProvider implements MemoryProvider {
           lifecycle_decision: decision,
         },
       });
+      } else {
+        // Rule-miss long tail: queue for batch LLM curation (opt-in). Message
+        // still goes into the cloud session below — backend extraction is the
+        // final safety net.
+        this.curationQueue.enqueue({ role: message.role, content: message.content });
+        sessionMessages.push({
+          ...message,
+          metadata: context ? {
+            ...(message.metadata || {}),
+            tenant_id: context.identity.tenantId,
+            user_id: context.identity.userId,
+            assistant_id: context.identity.agentId,
+            workspace_id: context.identity.workspaceId,
+            policy_version: context.policyVersion,
+            request_id: context.requestId,
+            lifecycle_decision: "rule-miss",
+          } : message.metadata,
+        });
+      }
     }
 
-    if (sessionMessages.length === 0) return { accepted: rejected === 0, count: lifecycleWrites, rejected, decisions, backend: this.id };
+    // Batch LLM curation flush for the rule-miss tail.
+    if (context && this.curationQueue.shouldFlush()) {
+      const flushed = await this.flushCuration(sessionId, context);
+      decisions.push(...flushed.decisions);
+      rejected += flushed.rejected;
+      lifecycleWrites += flushed.count;
+    }
+
+    if (sessionMessages.length === 0) return { accepted: rejected === 0, count: lifecycleWrites, rejected, decisions, conflicts, backend: this.id };
     const response = await this.client.addSession(`${sessionId}_${Date.now()}`, sessionMessages);
     if (response?.code === 0 && createdCandidates.length) {
       for (const candidate of createdCandidates) {
@@ -143,7 +196,51 @@ export class VikingMemoryProvider implements MemoryProvider {
         } catch { /* best-effort backfill */ }
       }
     }
-    return { ...responseResult(this.id, response, lifecycleWrites + sessionMessages.length), decisions, rejected: response?.code === 0 ? rejected : rejected + sessionMessages.length };
+    return { ...responseResult(this.id, response, lifecycleWrites + sessionMessages.length), decisions, conflicts, rejected: response?.code === 0 ? rejected : rejected + sessionMessages.length };
+  }
+
+  /** Flush queued rule-miss messages through the batch LLM curator (opt-in). */
+  async flushCuration(sessionId: string, context: MemoryRequestContext): Promise<{ count: number; rejected: number; decisions: Array<{ decision: string; reason: string; kind?: string }> }> {
+    const decisions: Array<{ decision: string; reason: string; kind?: string }> = [];
+    if (!llmExtractionEnabled() || this.curationQueue.size === 0) return { count: 0, rejected: 0, decisions };
+    const batch = this.curationQueue.takeBatch();
+    if (!batch.length) return { count: 0, rejected: 0, decisions };
+
+    const curated = await curateWithLlm(batch, context.identity, context, async (query) => this.search(query, { limit: this.config.recallLimit, context }));
+    if (!curated.handled) {
+      this.curationQueue.requeue(batch);
+      return { count: 0, rejected: 0, decisions };
+    }
+
+    let count = 0;
+    let rejected = 0;
+    for (const d of curated.decisions) {
+      const record = d.candidate;
+      if (d.action === "update" && d.target) {
+        const targetId = d.target.id;
+        const merged = `${d.target.content}\n\nUPDATED: ${record.content}`;
+        const updated = targetId
+          ? isGlobalPreference(record.kind)
+            ? await this.client.updateProfile(targetId, merged)
+            : await this.client.updateEvent(targetId, merged)
+          : null;
+        if (!updated || updated.code !== 0 || !targetId) { rejected++; decisions.push({ decision: "update", reason: "remote-update-failed", kind: record.kind }); continue; }
+        persistLifecycleTransition(d.target, "superseded", "llm-update", targetId);
+        persistLifecycleRecord({ ...record, status: "active" as const }, targetId, "llm-update");
+        count++;
+        decisions.push({ decision: "update", reason: d.reason || "llm", kind: record.kind });
+      } else if (d.action === "add") {
+        const response = isGlobalPreference(record.kind)
+          ? await this.client.addProfile(sanitizeSensitiveText(record.content))
+          : await this.client.addEvent(sanitizeSensitiveText(record.content), sessionId);
+        if (response?.code !== 0) { rejected++; decisions.push({ decision: "add", reason: "remote-create-failed", kind: record.kind }); continue; }
+        const remoteId = response?.data?.event_id || response?.data?.profile_id || response?.data?.id;
+        if (remoteId) persistLifecycleRecord({ ...record, status: "active" as const }, remoteId, "llm-create");
+        count++;
+        decisions.push({ decision: "add", reason: d.reason || "llm", kind: record.kind });
+      }
+    }
+    return { count, rejected, decisions };
   }
 
   async search(query: string, options?: { limit?: number; kind?: string; context?: MemoryRequestContext }): Promise<MemoryItem[]> {

@@ -62,6 +62,7 @@ export interface CaptureResult {
   error?: string;
   delivered?: boolean;
   decisions?: Array<{ decision: string; reason: string; kind?: string }>;
+  conflicts?: Array<{ fingerprint?: string; kind: string; candidate: string; targetId?: string; targetContent?: string }>;
 }
 
 export interface MemoryProvider {

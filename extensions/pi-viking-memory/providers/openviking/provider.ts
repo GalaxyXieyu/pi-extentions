@@ -6,8 +6,11 @@ import { replayPending } from "./shared/pending-queue.mjs";
 import { sanitizeSensitiveText, sanitizeSensitiveValue } from "../../core/sensitive.mjs";
 import { extractCandidates } from "../../core/candidate-extractor.js";
 import { localIdentity } from "../../core/contracts.js";
-import { authorize, filterRecall, gateCapture, persistLifecycleRecord, persistLifecycleTransition } from "../../core/runtime.js";
 import { lifecycleFingerprint } from "../../core/lifecycle-store.js";
+import { authorize, curateWithLlm, filterRecall, gateCapture, persistLifecycleRecord, persistLifecycleTransition, memoryHistoryById } from "../../core/runtime.js";
+import { llmExtractionEnabled } from "../../core/llm-extractor.js";
+import { rerankRecall } from "../../core/recall-rerank.js";
+import { CurationQueue } from "../../core/curation-queue.js";
 import type { MemoryRequestContext, MemoryRecord } from "../../core/contracts.js";
 
 export class OpenVikingProvider implements MemoryProvider {
@@ -32,6 +35,8 @@ export class OpenVikingProvider implements MemoryProvider {
     contextTakeover: true,
     archiveExpand: true,
   };
+
+  private readonly curationQueue = new CurationQueue();
 
   constructor(client: OVClient, config: OVConfig) {
     this.client = client;
@@ -67,21 +72,41 @@ export class OpenVikingProvider implements MemoryProvider {
     });
     const items = contextItems(context, request.context?.identity);
     const filtered = request.context ? filterRecall(items, request.context) : { items, dropped: 0 };
-    return { backend: this.id, purpose: request.purpose || "coding", items: filtered.items, block: formatRecall({ backend: this.id, items: filtered.items, maxChars: request.maxChars, purpose: request.purpose || "coding" } as any), raw: context };
+    const reranked = rerankRecall(filtered.items, request.query);
+    const historyById = request.context?.identity ? memoryHistoryById(request.context.identity) : new Map<string, string[]>();
+    return { backend: this.id, purpose: request.purpose || "coding", items: reranked, block: formatRecall({ backend: this.id, items: reranked, maxChars: request.maxChars, purpose: request.purpose || "coding" } as any, { historyById }), raw: context };
   }
 
   async capture(sessionId: string, messages: MemoryMessage[], context?: MemoryRequestContext): Promise<CaptureResult> {
     let count = 0;
     let rejected = 0;
     const decisions: Array<{ decision: string; reason: string; kind?: string }> = [];
+    const conflicts: Array<{ fingerprint?: string; kind: string; candidate: string; targetId?: string; targetContent?: string }> = [];
+
     for (const message of messages) {
       const safeMessage = context ? { ...message, metadata: { tenant_id: context.identity.tenantId, user_id: context.identity.userId, agent_id: context.identity.agentId, workspace_id: context.identity.workspaceId, policy_version: context.policyVersion, request_id: context.requestId } } : message;
-      if (context) {
-        const gate = await gateCapture(message.content, context.identity, context, async (query) => this.search(query, { limit: this.config.recallLimit, context }));
+      const ruleCandidates = extractCandidates({ text: safeMessage.content, identity: context?.identity || localIdentity(), purpose: context?.purpose || "coding", sourceType: message.role === "assistant" ? "agent" : "user", sessionId, policyVersion: context?.policyVersion });
+      if (ruleCandidates.rejected.some((item) => item.reason === "threat" || item.reason === "secret")) { rejected++; continue; }
+
+      const ruleHit = ruleCandidates.candidates.length > 0;
+      let gateHandled = false;
+
+      if (context && ruleHit) {
+        const gate = await gateCapture(message.content, context.identity, context, async (query) => this.search(query, { limit: this.config.recallLimit, context }), message.role === "assistant" ? "agent" : "user");
         const decision = gate.lifecycle?.decision || "capture-only";
         decisions.push({ decision, reason: gate.reason, kind: gate.extraction.candidates[0]?.kind });
-        if (!gate.allowed && gate.writeMode !== "lifecycle-action") { rejected++; continue; }
-        if (gate.writeMode === "session" && decision === "create" && gate.extraction.candidates[0]) {
+        if (gate.lifecycle?.decision === "conflict") {
+          const conflictRecord = gate.extraction.candidates[0] as unknown as MemoryRecord | undefined;
+          conflicts.push({
+            fingerprint: conflictRecord ? lifecycleFingerprint(conflictRecord) : undefined,
+            kind: String(conflictRecord?.kind || gate.extraction.candidates[0]?.kind || ""),
+            candidate: String(conflictRecord?.summary || conflictRecord?.content || message.content || "").slice(0, 300),
+            targetId: gate.lifecycle?.target?.id,
+            targetContent: String(gate.lifecycle?.target?.content || "").slice(0, 300),
+          });
+        }
+        if (!gate.allowed && gate.writeMode !== "lifecycle-action") { rejected++; gateHandled = true; }
+        if (!gateHandled && gate.writeMode === "session" && decision === "create" && gate.extraction.candidates[0]) {
           const candidateRecord = gate.extraction.candidates[0] as unknown as MemoryRecord;
           const slug = lifecycleFingerprint(candidateRecord);
           const uri = `viking://~/memories/${slug}.md`;
@@ -89,34 +114,85 @@ export class OpenVikingProvider implements MemoryProvider {
           if (written && written.uri) {
             persistLifecycleRecord({ ...candidateRecord, status: "active" as const }, written.uri, "remote-create");
             count++;
-            continue;
+            gateHandled = true;
           }
         }
-        if (gate.writeMode === "lifecycle-action") {
+        if (!gateHandled && gate.writeMode === "lifecycle-action") {
           const target = gate.lifecycle?.target;
           const uri = target?.id;
           const candidateRecord = gate.extraction.candidates[0] as unknown as MemoryRecord | undefined;
           const content = gate.lifecycle?.decision === "merge" && target ? `${target.content}\n\n${candidateRecord?.summary || message.content}` : (candidateRecord?.summary || sanitizeSensitiveText(message.content));
           const updated = uri?.startsWith("viking://") ? await this.client.writeContent(uri, content, { mode: "replace", wait: true }) : null;
-          if (!updated || !target || !candidateRecord) return { accepted: false, count, rejected, candidates: gate.extraction.candidates.length, decisions, backend: this.id, error: "lifecycle-action-deferred:no-writable-memory-uri", raw: gate };
+          if (!updated || !target || !candidateRecord) return { accepted: false, count, rejected, candidates: gate.extraction.candidates.length, decisions, conflicts, backend: this.id, error: "lifecycle-action-deferred:no-writable-memory-uri", raw: gate };
           const next = { ...candidateRecord, content, status: "active" as const, supersedes: target.id ? [target.id] : [] };
           persistLifecycleTransition(target, "superseded", `remote-${gate.lifecycle?.decision}`, target.id);
           persistLifecycleRecord(next, uri, `remote-${gate.lifecycle?.decision}`);
           count++;
-          continue;
+          gateHandled = true;
         }
+      } else if (context && !ruleHit) {
+        // Rule-miss long tail: queue for batch LLM curation (if enabled). The
+        // message still goes into the OV session below — backend commit is the
+        // final safety net.
+        this.curationQueue.enqueue({ role: message.role, content: safeMessage.content });
       }
-      const candidate = extractCandidates({ text: safeMessage.content, identity: context?.identity || localIdentity(), purpose: context?.purpose || "coding", sessionId, policyVersion: context?.policyVersion });
-      if (candidate.rejected.some((item) => item.reason === "threat" || item.reason === "secret")) { rejected++; continue; }
+
       const safeContent = sanitizeSensitiveText(safeMessage.content);
       const safeParts = safeMessage.parts?.map((part) => sanitizeSensitiveValue(part));
       const ok = safeParts?.length
         ? await this.client.addMessageParts(sessionId, message.role, safeParts)
         : await this.client.addMessage(sessionId, message.role, safeContent);
-      if (!ok) return { accepted: false, count, rejected, backend: this.id, error: "message capture failed" };
+      if (!ok) return { accepted: false, count, rejected, decisions, conflicts, backend: this.id, error: "message capture failed" };
       count++;
     }
-    return { accepted: true, count, rejected, decisions, backend: this.id };
+
+    // Batch LLM curation flush for the rule-miss tail.
+    if (context && this.curationQueue.shouldFlush()) {
+      const flushed = await this.flushCuration(sessionId, context);
+      decisions.push(...flushed.decisions);
+      rejected += flushed.rejected;
+      count += flushed.count;
+    }
+
+    return { accepted: true, count, rejected, decisions, conflicts, backend: this.id };
+  }
+
+  /** Flush queued rule-miss messages through the batch LLM curator (opt-in). */
+  async flushCuration(sessionId: string, context: MemoryRequestContext): Promise<{ count: number; rejected: number; decisions: Array<{ decision: string; reason: string; kind?: string }> }> {
+    const decisions: Array<{ decision: string; reason: string; kind?: string }> = [];
+    if (!llmExtractionEnabled() || this.curationQueue.size === 0) return { count: 0, rejected: 0, decisions };
+    const batch = this.curationQueue.takeBatch();
+    if (!batch.length) return { count: 0, rejected: 0, decisions };
+
+    const curated = await curateWithLlm(batch, context.identity, context, async (query) => this.search(query, { limit: this.config.recallLimit, context }));
+    if (!curated.handled) {
+      this.curationQueue.requeue(batch);
+      return { count: 0, rejected: 0, decisions };
+    }
+
+    let count = 0;
+    let rejected = 0;
+    for (const d of curated.decisions) {
+      const record = d.candidate;
+      if (d.action === "update" && d.target) {
+        const uri = d.target.id;
+        const merged = `${d.target.content}\n\nUPDATED: ${record.content}`;
+        const updated = uri?.startsWith("viking://") ? await this.client.writeContent(uri, merged, { mode: "replace", wait: true }) : null;
+        if (!updated || !uri) { rejected++; decisions.push({ decision: "update", reason: "remote-update-failed", kind: record.kind }); continue; }
+        persistLifecycleTransition(d.target, "superseded", "llm-update", uri);
+        persistLifecycleRecord({ ...record, status: "active" as const }, uri, "llm-update");
+        count++;
+        decisions.push({ decision: "update", reason: d.reason || "llm", kind: record.kind });
+      } else if (d.action === "add") {
+        const uri = `viking://~/memories/${lifecycleFingerprint(record)}.md`;
+        const written = await this.client.writeContent(uri, record.content, { mode: "create", wait: true });
+        if (!written || !written.uri) { rejected++; decisions.push({ decision: "add", reason: "remote-create-failed", kind: record.kind }); continue; }
+        persistLifecycleRecord({ ...record, status: "active" as const }, written.uri, "llm-create");
+        count++;
+        decisions.push({ decision: "add", reason: d.reason || "llm", kind: record.kind });
+      }
+    }
+    return { count, rejected, decisions };
   }
 
   async commit(sessionId: string): Promise<CaptureResult> {

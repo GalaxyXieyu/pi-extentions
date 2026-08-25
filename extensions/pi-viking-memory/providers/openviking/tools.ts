@@ -4,6 +4,7 @@ import type { OVClient } from "./client.js";
 import type { SyncManager } from "./sync.js";
 import type { OpenVikingProvider } from "./provider.js";
 import type { MemoryRequestContext } from "../../core/contracts.js";
+import { listPendingReviews, resolveReview } from "../../core/runtime.js";
 import { createMemoryCardRenderer, type MemoryCardOptions } from "../../core/tui/output-view.js";
 
 export function registerTools(pi: any, client: OVClient, sync?: SyncManager, provider?: OpenVikingProvider, context?: () => MemoryRequestContext, cardOptions?: MemoryCardOptions): void {
@@ -121,6 +122,35 @@ export function registerTools(pi: any, client: OVClient, sync?: SyncManager, pro
       const uri = `viking://session/${sid}`;
       const content = await client.overview(uri) || await client.overview(`${uri}/history`);
       return { content: [{ type: "text", text: content || `Archive not found: ${sid}` }], details: { uri, sessionId: sid, empty: !content } };
+    },
+    ...cardResult,
+  });
+
+  pi.registerTool({
+    name: "viking_review",
+    label: "Viking Pending Review",
+    description: "List or resolve pending memory contradictions flagged for user confirmation. Use 'list' to inspect, then 'accept-new' (new fact wins), 'keep-old' (existing memory wins), or 'merge' (combine both).",
+    promptSnippet: "Review pending OpenViking memory contradictions",
+    parameters: Type.Object({
+      action: StringEnum(["list", "accept-new", "keep-old", "merge"] as const),
+      fingerprint: Type.Optional(Type.String({ description: "Fingerprint of the pending review (from 'list')" })),
+    }),
+    async execute(_id: string, params: any) {
+      const loopContext = context?.();
+      if (!loopContext) return { content: [{ type: "text", text: "memory request context is unavailable" }] };
+      if (params.action === "list") {
+        const pending = listPendingReviews(loopContext.identity);
+        if (!pending.length) return { content: [{ type: "text", text: "No pending memory reviews." }], details: { count: 0 } };
+        const lines = pending.map((entry, index) => `#${index} fingerprint=${entry.fingerprint}
+  kind=${entry.record.kind} scope=${entry.record.scope} status=${entry.record.status}
+  content: ${entry.record.content.slice(0, 300)}
+  contradicts: ${(entry.record.contradicts || []).join(", ") || "(none)"}`);
+        return { content: [{ type: "text", text: lines.join("\n\n") }], details: { count: pending.length, fingerprints: pending.map((e) => e.fingerprint) } };
+      }
+      if (!params.fingerprint) return { content: [{ type: "text", text: "fingerprint is required for accept-new / keep-old / merge" }], isError: true };
+      const resolved = resolveReview({ fingerprint: String(params.fingerprint) }, params.action as "accept-new" | "keep-old" | "merge");
+      if (!resolved.ok) return { content: [{ type: "text", text: resolved.error || "review resolution failed" }], isError: true };
+      return { content: [{ type: "text", text: `Resolved (${params.action}): ${resolved.record?.content.slice(0, 120)}` }], details: { action: params.action, fingerprint: params.fingerprint } };
     },
     ...cardResult,
   });

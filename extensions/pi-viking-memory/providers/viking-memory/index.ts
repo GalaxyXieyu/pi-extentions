@@ -11,7 +11,7 @@ import { registerTools } from "./tools.js";
 import { memoryStats, measure } from "../../core/runtime.js";
 import { loadCanonicalConfig } from "../../core/config-protocol.js";
 import { localIdentity, requestContext, resolverFromEnv, type MemoryRequestContext } from "../../core/contracts.js";
-import { auditReceipt, recentAuditRecords } from "../../core/runtime.js";
+import { auditReceipt, handleReviewPrompts, recentAuditRecords, runConsolidationPass } from "../../core/runtime.js";
 import { resolveWorkspaceIdentity } from "../../core/workspace-identity.js";
 
 export default async function (pi: ExtensionAPI) {
@@ -124,6 +124,9 @@ export default async function (pi: ExtensionAPI) {
     }
     const result = await measure("capture", provider.id, () => provider.capture(conversationId, extracted.messages, requestContextValue));
     memoryStats.record({ type: "extraction", backend: provider.id, operation: "turn_end", count: result.count });
+    if (result.conflicts?.length) {
+      await handleReviewPrompts(ctx.ui, result.conflicts);
+    }
     if (!result.accepted) {
       log(`session/add failed: ${result.error || "no response"}`);
       return;
@@ -152,6 +155,16 @@ export default async function (pi: ExtensionAPI) {
   pi.registerCommand("viking-memory-stats", {
     description: "Show local memory operation statistics.",
     handler: async (_args: string, ctx: any) => { ctx.ui.notify(JSON.stringify(memoryStats.snapshot()), "info"); },
+  });
+  pi.registerCommand("viking-memory-consolidate", {
+    description: "Scan the local memory ledger for duplicate/contradicting memories and promote findings to review.",
+    handler: async (_args: string, ctx: any) => {
+      const result = await runConsolidationPass(requestContextValue.identity, ctx.ui);
+      const lines = result.findings.length
+        ? result.findings.map((f) => `sim=${f.similarity.toFixed(2)} ${f.suggestion} | ${f.a.record.content.slice(0, 80)} <-> ${f.b.record.content.slice(0, 80)}`).join("\n")
+        : "No similar/contradicting memories found.";
+      ctx.ui.notify(`Consolidation: ${result.promoted} promoted, ${result.findings.length} findings.\n${lines}`);
+    },
   });
   pi.registerCommand("viking-memory-audit", {
     description: "Show a redacted session audit summary.",

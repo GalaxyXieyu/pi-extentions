@@ -9,12 +9,17 @@ export interface LifecycleLedgerEntry {
   remoteId?: string;
   record: MemoryRecord;
   history: Array<{ status: MemoryStatus; at: string; reason: string; targetId?: string }>;
+  lastAccessedAt?: string;
 }
 
 export class LifecycleStore {
   private entries = new Map<string, LifecycleLedgerEntry>();
   private readonly path: string;
-  constructor(path = process.env.PI_MEMORY_LIFECYCLE_FILE || localMemoryStatePath("lifecycle.json")) { this.path = path; this.load(); }
+  constructor(path = process.env.PI_MEMORY_LIFECYCLE_FILE || localMemoryStatePath("lifecycle.json")) {
+    // `:memory:`-prefixed paths are in-process-only test fixtures: never touch disk.
+    this.path = path?.startsWith(":memory:") ? "" : path;
+    this.load();
+  }
 
   find(fingerprint: string): LifecycleLedgerEntry | undefined { return this.entries.get(fingerprint); }
   all(): LifecycleLedgerEntry[] { return [...this.entries.values()]; }
@@ -44,7 +49,18 @@ export class LifecycleStore {
 
   isActive(fingerprint: string): boolean {
     const status = this.entries.get(fingerprint)?.record.status;
-    return !status || ["candidate", "confirmed", "active", "needs-confirmation"].includes(status);
+    return !status || ["candidate", "confirmed", "active", "needs-confirmation", "pending_review"].includes(status);
+  }
+
+  touch(fingerprint: string): void {
+    const entry = this.entries.get(fingerprint);
+    if (!entry) return;
+    entry.lastAccessedAt = new Date().toISOString();
+    this.persist();
+  }
+
+  findByRemoteId(remoteId: string): LifecycleLedgerEntry[] {
+    return this.all().filter((entry) => entry.remoteId === remoteId);
   }
 
   private load(): void {
@@ -67,4 +83,12 @@ export class LifecycleStore {
 
 export function lifecycleFingerprint(record: Pick<MemoryRecord, "kind" | "scope" | "owner" | "content">): string {
   return `${record.owner.tenantId}|${record.owner.userId || ""}|${record.owner.workspaceId || ""}|${record.kind}|${record.scope}|${record.content.trim().toLowerCase()}`;
+}
+
+let sharedStore: LifecycleStore | undefined;
+
+/** Process-wide lifecycle ledger singleton (shared by runtime + consolidation). */
+export function getLifecycleStore(): LifecycleStore {
+  if (!sharedStore) sharedStore = new LifecycleStore();
+  return sharedStore;
 }

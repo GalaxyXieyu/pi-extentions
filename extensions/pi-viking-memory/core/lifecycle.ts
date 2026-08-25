@@ -12,10 +12,11 @@ export interface LifecycleDecision {
 
 export function transition(record: MemoryRecord, next: MemoryStatus, reason: string, actor = "system"): MemoryRecord {
   const allowed: Record<MemoryStatus, MemoryStatus[]> = {
-    candidate: ["needs-confirmation", "confirmed", "active", "rejected"],
-    "needs-confirmation": ["confirmed", "rejected"],
-    confirmed: ["active", "superseded", "conflicted", "expired", "archived"],
-    active: ["superseded", "conflicted", "expired", "archived"],
+    candidate: ["needs-confirmation", "confirmed", "active", "pending_review", "rejected"],
+    "needs-confirmation": ["confirmed", "pending_review", "rejected"],
+    confirmed: ["active", "pending_review", "superseded", "conflicted", "expired", "archived"],
+    active: ["pending_review", "superseded", "conflicted", "expired", "archived"],
+    pending_review: ["confirmed", "active", "superseded", "rejected", "archived"],
     superseded: ["archived"],
     conflicted: ["confirmed", "active", "superseded", "archived"],
     expired: ["archived", "active"],
@@ -37,10 +38,14 @@ export function decideMerge(candidate: MemoryRecord, existing: MemoryRecord | un
     if (candidate.confidence === "high" && ["confirmed", "active"].includes(existing.status)) {
       return { decision: "supersede", reason: "high-confidence replacement of active fact", candidate, target: existing, policyVersion: candidate.policyVersion };
     }
-    return { decision: "conflict", reason: "contradictory durable fact requires confirmation", candidate, target: existing, policyVersion: candidate.policyVersion };
+    const contradicts = existing.id ? [existing.id] : undefined;
+    return { decision: "conflict", reason: "contradictory durable fact requires confirmation", candidate: { ...candidate, contradicts }, target: existing, policyVersion: candidate.policyVersion };
   }
   if (["event", "experience"].includes(kind)) return { decision: "merge", reason: "append compatible episodic history", candidate, target: existing, policyVersion: candidate.policyVersion };
-  if (kind === "workflow") return { decision: "conflict", reason: "workflow change requires verification", candidate, target: existing, policyVersion: candidate.policyVersion };
+  if (kind === "workflow") {
+    const contradicts = existing.id ? [existing.id] : undefined;
+    return { decision: "conflict", reason: "workflow change requires verification", candidate: { ...candidate, contradicts }, target: existing, policyVersion: candidate.policyVersion };
+  }
   return { decision: "create", reason: "default conservative lifecycle policy", candidate, policyVersion: candidate.policyVersion };
 }
 

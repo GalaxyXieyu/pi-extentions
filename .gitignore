@@ -4,3 +4,6 @@
 .runtime/
 # In-memory lifecycle test fixtures created by PI_MEMORY_LIFECYCLE_FILE=:memory:<id>
 :memory:*
+
+# PM local cache
+.planning/

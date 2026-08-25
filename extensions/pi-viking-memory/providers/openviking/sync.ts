@@ -21,6 +21,7 @@ export interface SyncBranchResult {
   added: number;
   tokens: number;
   allDelivered: boolean;
+  conflicts: Array<{ fingerprint?: string; kind: string; candidate: string; targetId?: string; targetContent?: string }>;
 }
 
 function debugLog(message: string): void {
@@ -120,7 +121,7 @@ export class SyncManager {
   }
 
   async syncBranch(branch: any[], context?: MemoryRequestContext): Promise<SyncBranchResult> {
-    if (!this.ovSessionId) return { added: 0, tokens: 0, allDelivered: true };
+    if (!this.ovSessionId) return { added: 0, tokens: 0, allDelivered: true, conflicts: [] };
 
     const extracted = extractBranchCapturePayloads(branch, this.syncedEntryCount, this.config);
     if (extracted.resetWatermark) this.syncedEntryCount = 0;
@@ -137,7 +138,7 @@ export class SyncManager {
     if (added > 0 && !this.config.takeoverEnabled) {
       await this.commitIfNeeded();
     }
-    return { added, tokens, allDelivered };
+    return { added, tokens, allDelivered, conflicts: captured.conflicts || [] };
   }
 
   async addPayload(payload: any): Promise<AddPayloadResult> {

@@ -1,7 +1,8 @@
 export type IdentitySource = "local" | "env" | "session" | "external-auth" | "gateway" | "custom";
 export type MemoryScope = "user" | "project" | "workspace" | "department" | "tenant" | "session" | "global";
-export type MemoryStatus = "candidate" | "needs-confirmation" | "confirmed" | "active" | "superseded" | "conflicted" | "expired" | "archived" | "rejected";
+export type MemoryStatus = "candidate" | "needs-confirmation" | "confirmed" | "active" | "pending_review" | "superseded" | "conflicted" | "expired" | "archived" | "rejected";
 export type MemoryKind = "profile" | "preference" | "project" | "decision" | "event" | "experience" | "workflow" | "resource" | "session";
+export type MemorySourceType = "user" | "agent" | "system";
 
 export interface MemoryIdentity {
   tenantId: string;
@@ -41,10 +42,11 @@ export interface MemoryCandidate {
   summary: string;
   content: string;
   owner: { tenantId: string; userId?: string; agentId?: string; workspaceId?: string };
-  source: { sessionId?: string; files?: string[]; commands?: string[]; observedAt: string };
+  source: { sessionId?: string; files?: string[]; commands?: string[]; observedAt: string; sourceType?: MemorySourceType };
   createdAt: string;
   updatedAt: string;
   policyVersion: number;
+  contradicts?: string[];
   security: { verdict: string; findings: string[] };
 }
 
@@ -56,7 +58,7 @@ export interface MemoryRecord {
   confidence: "low" | "medium" | "high";
   content: string;
   owner: { tenantId: string; userId?: string; agentId?: string; workspaceId?: string };
-  source: { backend?: string; sessionId?: string; files?: string[]; commands?: string[]; requestId?: string; observedAt: string };
+  source: { backend?: string; sessionId?: string; files?: string[]; commands?: string[]; requestId?: string; observedAt: string; sourceType?: MemorySourceType };
   createdAt: string;
   updatedAt: string;
   validFrom?: string;
@@ -64,6 +66,7 @@ export interface MemoryRecord {
   reviewAt?: string;
   staleAfter?: string;
   supersedes?: string[];
+  contradicts?: string[];
   related?: string[];
   policyVersion: number;
   metadata?: Record<string, unknown>;

@@ -26,7 +26,7 @@ import { sanitizeSensitiveText } from "../../core/sensitive.mjs";
 import { memoryStats, measure } from "../../core/runtime.js";
 import { loadCanonicalConfig } from "../../core/config-protocol.js";
 import { localIdentity, requestContext, resolverFromEnv, type MemoryRequestContext } from "../../core/contracts.js";
-import { auditReceipt, recentAuditRecords } from "../../core/runtime.js";
+import { auditReceipt, handleReviewPrompts, recentAuditRecords, runConsolidationPass } from "../../core/runtime.js";
 
 export default async function (pi: ExtensionAPI) {
   // --- Load config ---
@@ -238,6 +238,9 @@ export default async function (pi: ExtensionAPI) {
     memoryStats.record({ type: "extraction", backend: provider.id, operation: "turn_end", count: result.added });
     debugLog(`turn_end: synced ${result.added} entries, ~${result.tokens} tokens`);
     await takeover.onTurnSynced(result.tokens);
+    if (result.conflicts?.length) {
+      await handleReviewPrompts(ctx.ui, result.conflicts);
+    }
     updateStatus(ctx, connected, result.added, sync.sessionId, config, takeover.state);
   });
 
@@ -294,6 +297,17 @@ export default async function (pi: ExtensionAPI) {
   pi.registerCommand("viking-memory-stats", {
     description: "Show local memory operation statistics.",
     handler: async (_args, ctx) => { ctx.ui.notify(JSON.stringify(memoryStats.snapshot()), "info"); },
+  });
+
+  pi.registerCommand("viking-consolidate", {
+    description: "Scan the local memory ledger for duplicate/contradicting memories and promote findings to review.",
+    handler: async (_args, ctx) => {
+      const result = await runConsolidationPass(requestContextValue.identity, ctx.ui);
+      const lines = result.findings.length
+        ? result.findings.map((f) => `sim=${f.similarity.toFixed(2)} ${f.suggestion} | ${f.a.record.content.slice(0, 80)} <-> ${f.b.record.content.slice(0, 80)}`).join("\n")
+        : "No similar/contradicting memories found.";
+      ctx.ui.notify(`Consolidation: ${result.promoted} promoted, ${result.findings.length} findings.\n${lines}`);
+    },
   });
 
   pi.registerCommand("viking-memory-audit", {

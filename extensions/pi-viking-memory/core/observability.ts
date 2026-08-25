@@ -43,7 +43,11 @@ export interface StatsProvider {
 export class FileStatsProvider implements StatsProvider {
   private events: MemoryEvent[] = [];
   private readonly filePath: string;
-  constructor(filePath = process.env.PI_MEMORY_STATS_FILE || localMemoryStatePath("events.jsonl")) { this.filePath = filePath; this.load(); }
+  constructor(filePath = process.env.PI_MEMORY_STATS_FILE || localMemoryStatePath("events.jsonl")) {
+    // `:memory:`-prefixed paths are in-process-only test fixtures: never touch disk.
+    this.filePath = filePath?.startsWith(":memory:") ? "" : filePath;
+    this.load();
+  }
 
   private load(): void {
     if (!existsSync(this.filePath)) return;

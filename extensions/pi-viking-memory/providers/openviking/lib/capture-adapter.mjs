@@ -59,7 +59,24 @@ export function extractBranchCapturePayloads(branch, syncedEntryCount = 0, cfg =
     const decision = cfg.faithfulCapture || cfg.takeoverEnabled
       ? faithfulDecision(rawText, cfg)
       : shouldCaptureText(rawText, role, cfg);
-    const structuredParts = parts.filter((part) => part?.type !== "text");
+    // Tool results are noise for memory extraction: default keeps only tool USE
+    // inputs (name + args), dropping tool_output entirely when captureToolResults
+    // is not explicitly enabled (default config.json: false).
+    let structuredParts = parts.filter((part) => part?.type !== "text");
+    if (cfg.captureToolResults === false) {
+      const filtered = [];
+      for (const part of structuredParts) {
+        if (!part || part.type !== "tool") { filtered.push(part); continue; }
+        // A result part exists to carry output; drop it. Call parts keep tool_input.
+        if (part.tool_output !== undefined) {
+          if (!part.tool_input) continue;
+          filtered.push({ ...part, tool_output: undefined });
+          continue;
+        }
+        filtered.push(part);
+      }
+      structuredParts = filtered;
+    }
     if (!decision.shouldCapture && structuredParts.length === 0) continue;
 
     // decision.text is derived from rawText, which renders tool I/O as
