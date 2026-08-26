@@ -13,6 +13,8 @@ import { classify, correctionSignal } from "./candidate-extractor.js";
 import type { MemoryKind } from "./contracts.js";
 import { consolidateLocal, type ConsolidationFinding } from "./consolidation.js";
 import type { ConflictArbiter } from "./conflict-arbiter.js";
+import { truncateToWidth } from "./tui/output-view.js";
+
 
 export const memoryStats: StatsProvider = new FileStatsProvider();
 export const memoryPolicy = new MemoryPolicyEngine();
@@ -302,6 +304,14 @@ export async function curateWithLlm(
       : "medium";
     const scope = entry.scope === "user" ? "user" : (kind === "profile" || kind === "preference" ? "user" : "workspace");
 
+    // Low-confidence extractions are noise (speculation, one-off workarounds,
+    // conversation events). Skip them unless the user explicitly asked to
+    // remember something.
+    if (confidence === "low" && !/记住|请记住|记得|remember|以后(?:都|一直|就)|偏好|prefer/i.test(entry.text)) {
+      memoryStats.record({ type: "extraction", backend: "llm", operation: "curation", requestId: context.requestId, count: 1, error: "dropped-low-confidence" });
+      continue;
+    }
+
     const candidateRecord: MemoryRecord = {
       kind,
       scope,
@@ -403,6 +413,28 @@ export function resolveReview(entry: { fingerprint: string }, action: ReviewActi
 
 export type ReviewMode = "notify" | "confirm" | "silent";
 
+/**
+ * Clean memory content for the conflict dialogs: strip markdown markers,
+ * collapse whitespace into a single line, throw away formatting noise.
+ */
+export function formatConflictPreview(text: string | undefined, max = 72): string {
+  const EMPTY = "(无内容)";
+  const raw = String(text ?? "").trim();
+  if (!raw) return EMPTY;
+  const clean = raw
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/`([^`]*)`/g, "$1")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/\*([^*]+)\*/g, "$1")
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/^[#>*+\-\d.]+\s*/gm, "")
+    .replace(/[*_~`|<>]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!clean) return EMPTY;
+  return truncateToWidth(clean, max);
+}
+
 export function reviewMode(): ReviewMode {
   const raw = String(process.env.MEMORY_REVIEW_MODE || "notify").toLowerCase();
   if (raw === "confirm") return "confirm";
@@ -436,15 +468,15 @@ export async function handleReviewPrompts(
   if (mode === "confirm" && typeof ui?.select === "function") {
     let resolved = 0;
     for (const conflict of conflicts) {
-      const label = conflict.candidate.slice(0, 120);
-      const old = conflict.targetContent ? conflict.targetContent.slice(0, 120) : "(unknown)";
+      const newText = formatConflictPreview(conflict.candidate, 56);
+      const oldText = formatConflictPreview(conflict.targetContent, 56);
       let choice: string | null = null;
       try {
-        choice = await ui.select(`VM conflict: new fact "${label}" vs existing "${old}"`, [
-          "accept-new (new fact wins)",
-          "keep-old (existing memory wins)",
-          "merge (combine both)",
-          "defer (keep pending)",
+        choice = await ui.select(`Viking Memory 记忆冲突:新记忆与已有记忆内容互相矛盾,请选择如何处理\n\n新记忆:「${newText}」\n已有记忆:「${oldText}」`, [
+          "accept-new (采纳新记忆)",
+          "keep-old (保留旧记忆)",
+          "merge (合并两者)",
+          "defer (暂不处理)",
         ]);
       } catch {
         choice = "defer";
@@ -458,7 +490,7 @@ export async function handleReviewPrompts(
 
   // notify mode
   if (typeof ui?.notify === "function") {
-    ui.notify(`Viking: ${conflicts.length} conflicting memor(ies) pending review. Use the review tool or ask me to resolve.`);
+    ui.notify(`Viking Memory:有 ${conflicts.length} 条新记忆与已有记忆冲突,待确认。可直接对我说"处理记忆冲突",或运行 viking_memory_review 工具。`);
   }
   return { resolved: 0, deferred: conflicts.length };
 }

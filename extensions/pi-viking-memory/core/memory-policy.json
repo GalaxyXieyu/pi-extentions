@@ -15,8 +15,12 @@
       "credentials, API keys, tokens, cookies, passwords, private keys, or auth headers",
       "raw unbounded tool output, logs, web pages, or environment dumps",
       "recall injection blocks or plugin status text",
-      "temporary drafts, speculative model claims, greetings, and low-value chatter"
-    ],
+      "temporary drafts, speculative model claims, greetings, and low-value chatter",
+      "one-off task decisions and temporary workarounds",
+      "conversation events: who asked what or what happened this turn",
+      "project implementation details re-readable from the repo",
+      "in-progress discussion, speculation, or unanswered questions"
+],
     "dedup": "semantic candidate retrieval within the same scope, then skip/create/merge decision",
     "conflict": "preserve source and time; mark superseded or needs-confirmation; never silently overwrite",
     "recall": "filter scope and status first, rank by semantic relevance, then apply time decay and budget"
