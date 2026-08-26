@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.11 - 2026-08-26
+
+### Fixes
+
+- Extraction tightened (rule + LLM paths): bare process words (做了/执行/报错/架构) no longer trigger events/experiences/decisions alone; questions, greetings, and open task narration are filtered out; the LLM extraction prompt now defaults to noop with a durable/stable/reusable gate and explicit NEVER list (one-off workarounds, conversation events, repo-readable details). Low-confidence (<0.5) LLM extractions are dropped. Stops project chatter and one-off task steps from flooding memory.
+- Conflict review prompt redesigned: `VM conflict: new fact ... vs existing ...` (raw slice, markdown noise) → multi-line `Viking Memory 记忆冲突` with `formatConflictPreview` (strips markdown, collapses whitespace, CJK-aware truncation). notify text localized. The `VM` abbreviation is gone.
+
 ## 0.2.10 - 2026-08-25
 
 ### Features
