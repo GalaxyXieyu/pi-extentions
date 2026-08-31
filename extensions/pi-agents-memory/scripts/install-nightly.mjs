@@ -24,7 +24,7 @@ import { fileURLToPath } from "node:url";
 const LABEL = "com.pi.agents-memory.nightly";
 const LEGACY_LABELS = ["com.pi.viking-memory.nightly"];
 const LEGACY_PLISTS = LEGACY_LABELS.map((label) => join(homedir(), "Library", "LaunchAgents", `${label}.plist`));
-const scriptPath = join(dirname(fileURLToPath(import.meta.url)), "nightly-sweep.mjs");
+const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const stateDir = join(homedir(), ".pi", "agent", "pi-agents-memory");
 const envFile = join(stateDir, "nightly.env");
 const plistPath = join(homedir(), "Library", "LaunchAgents", `${LABEL}.plist`);
@@ -52,8 +52,8 @@ if (args.status) {
   process.exit(result.status === 0 ? 0 : 1);
 }
 
-if (!existsSync(scriptPath)) {
-  console.error(`nightly-sweep.mjs not found next to this script: ${scriptPath}`);
+if (!existsSync(piCli()) || !piCli().includes("/")) {
+  console.error(`pi CLI not resolved (got "${piCli()}"). Install pi on PATH, or set PI_MEMORY_NIGHTLY_CLI=/abs/path/to/pi and re-run.`);
   process.exit(1);
 }
 
@@ -64,7 +64,7 @@ const body = plist({
   minute,
   outPath: join(stateDir, "nightly.out"),
   errPath: join(stateDir, "nightly.err"),
-  workingDirectory: dirname(dirname(scriptPath)),
+  workingDirectory: homedir(),
 });
 
 if (args.dryRun) {
@@ -114,23 +114,33 @@ console.log(`installed ${plistPath}`);
 if (seeded) console.log(`wrote ${envFile} (mode 0600) from the current shell env — edit it if that list is wrong`);
 console.log(`sweep runs daily at ${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")} local`);
 console.log(`  node   ${node}`);
-console.log(`  script ${scriptPath}`);
+console.log(`  pi     ${piCli()}`);
+console.log(`  package ${packageRoot}`);
+console.log(`  args   ${argsValue()}`);
 console.log(`  log    ${join(stateDir, "nightly.log")}`);
 console.log(`try it now: launchctl kickstart -k gui/${uid()}/${LABEL}`);
 
 function zshCommand() {
-  const lines = [
-    // launchd hands the job a minimal PATH (/usr/bin:/bin:/usr/sbin:/sbin).
-    // The sweep needs both node (shebang) and the pi CLI, so pin what we
-    // resolved at install time instead of discovering "no model" at 00:00.
-    `export PATH=${quote([dirname(node), dirname(piCli()), "/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(":"))}:$PATH`,
-    `if [ -f ${quote(envFile)} ]; then set -a; . ${quote(envFile)}; set +a; fi`,
+  return [
+    // launchd hands the job a minimal PATH; pin node + pi resolved at install.
+    `export PATH=${quote(jobPath())}:$PATH`,
+    `[ -f ${quote(envFile)} ] && { set -a; . ${quote(envFile)}; set +a; } || true`,
     `export PI_MEMORY_NIGHTLY_LOG=${quote(join(stateDir, "nightly.log"))}`,
-    `export PI_MEMORY_NIGHTLY_CLI=${quote(piCli())}`,
-    `export PI_MEMORY_NIGHTLY_NODE=${quote(node)}`,
-    `exec ${quote(node)} --experimental-strip-types --no-warnings ${quote(scriptPath)}`,
-  ];
-  return lines.join(" && ");
+    // The sweep runs inside pi: pi loads the plugin's TypeScript from wherever
+    // it is installed, while plain node cannot type-strip .ts under
+    // node_modules at all. So the job is a headless pi, not a node script.
+    "export PI_MEMORY_NIGHTLY_RUN=1",
+    `export PI_MEMORY_NIGHTLY_ARGS=${quote(argsValue())}`,
+    `exec ${quote(piCli())} -p --no-session --no-tools --mode text "${LABEL}: run memory sweep"`,
+  ].join(" && ");
+}
+
+function argsValue() {
+  return process.env.PI_MEMORY_NIGHTLY_ARGS || `--since-hours ${process.env.PI_MEMORY_NIGHTLY_HOURS || 26}`;
+}
+
+function jobPath() {
+  return [dirname(node), dirname(piCli()), "/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(":");
 }
 
 /** Absolute path to the pi CLI, resolved when the job is installed. */

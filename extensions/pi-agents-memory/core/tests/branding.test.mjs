@@ -100,14 +100,23 @@ test("the nightly sweep resolves the pi CLI even with launchd's bare PATH", asyn
   rmSync(home, { recursive: true, force: true });
 });
 
-test("the nightly sweep ships its own TS loader (tests/ is not published)", () => {
+test("the scheduled sweep runs inside pi, not as a bare node script", () => {
   const root = join(import.meta.dirname, "..", "..");
-  const script = readFileSync(join(root, "scripts/nightly-sweep.mjs"), "utf8");
+  const installer = readFileSync(join(root, "scripts/install-nightly.mjs"), "utf8");
+  assert.ok(installer.includes("PI_MEMORY_NIGHTLY_RUN=1"), "launchd must start pi headless");
+  assert.ok(!/--experimental-strip-types[^"]*\$\{quote\(scriptPath\)/.test(installer), "node cannot type-strip .ts inside node_modules, so the job must not exec the plugin sources");
+  for (const entry of ["providers/viking-memory/index.ts", "providers/openviking/index.ts"]) {
+    const source = readFileSync(join(root, entry), "utf8");
+    assert.ok(source.includes("process.env.PI_MEMORY_NIGHTLY_RUN"), `${entry} must honour the headless flag`);
+    assert.ok(source.includes("runNightlyInProcess"), `${entry} must share the one sweep implementation`);
+  }
+});
+
+test("the dev sweep script ships alongside the package", () => {
+  const root = join(import.meta.dirname, "..", "..");
   const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
-  assert.ok(!/\.\.\/tests\/|providers\/\*\/tests/.test(script), "the sweep must not import test-only resolvers");
-  assert.ok(script.includes("./lib/register-loader.mjs"), "the sweep registers the shipped loader");
-  for (const file of ["scripts/lib/register-loader.mjs", "scripts/lib/ts-resolver.mjs"]) {
+  assert.ok(pkg.files.includes("scripts/*.mjs") && pkg.files.includes("scripts/lib/*.mjs"), "scripts + resolver must be published");
+  for (const file of ["scripts/nightly-sweep.mjs", "scripts/install-nightly.mjs", "scripts/lib/register-loader.mjs", "scripts/lib/ts-resolver.mjs"]) {
     assert.ok(existsSync(join(root, file)), `${file} must exist`);
   }
-  assert.ok(pkg.files.includes("scripts/lib/*.mjs"), "package files allowlist must ship scripts/lib");
 });

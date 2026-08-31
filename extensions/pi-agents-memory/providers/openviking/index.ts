@@ -21,16 +21,17 @@ import { registerTools } from "./tools.js";
 import { createTakeoverManager } from "./takeover.js";
 import { isSelected } from "../../core/selection.js";
 import { OpenVikingProvider } from "./provider.js";
+import { createOpenVikingNightlyProvider } from "./nightly.js";
 import { injectRecall } from "../../core/format.js";
 import { sanitizeSensitiveText } from "../../core/sensitive.mjs";
 import { memoryStats, measure } from "../../core/runtime.js";
 import { loadCanonicalConfig } from "../../core/config-protocol.js";
 import { localIdentity, requestContext, resolverFromEnv, type MemoryRequestContext } from "../../core/contracts.js";
 import { auditReceipt, handleReviewPrompts, recentAuditRecords, runConsolidationPass } from "../../core/runtime.js";
-import { makePilotComplete } from "../../core/pilot.js";
+import { makePilotComplete, makeHostComplete } from "../../core/pilot.js";
 import { registerMemoryCommand } from "../../core/command-registry.js";
 import { inlineLlmEnabled } from "../../core/llm-extractor.js";
-import { runNightlySweepProcess } from "../../core/nightly.js";
+import { runNightlyInProcess, parseNightlyArgs, nightlySummary } from "../../core/nightly-runner.js";
 
 export default async function (pi: ExtensionAPI) {
   // --- Load config ---
@@ -171,8 +172,25 @@ export default async function (pi: ExtensionAPI) {
     return startPromise;
   };
 
+  // --- nightly sweep (in-process; see core/nightly-runner.ts) ---
+  const runNightly = async (ctx: any, args: string) => runNightlyInProcess({
+    ...parseNightlyArgs(args),
+    base: { userId: config.user, agentId: "pi", tenantId: config.account },
+    complete: makeHostComplete(() => ctx),
+    providerFor: createOpenVikingNightlyProvider(config),
+    log: debugLog,
+  });
+
+  // launchd starts a headless pi with PI_MEMORY_NIGHTLY_RUN=1: curate, print,
+  // exit before pi would send anything to a model.
+  const headlessNightly = process.env.PI_MEMORY_NIGHTLY_RUN === "1";
+
   // --- session_start ---
   pi.on("session_start", async (event, ctx) => {
+    if (headlessNightly) {
+      const { report } = await runNightly(ctx, process.env.PI_MEMORY_NIGHTLY_ARGS || "");
+      process.exit(report.errors.length && !report.processed ? 1 : 0);
+    }
     await start(ctx);
   });
 
@@ -321,10 +339,9 @@ export default async function (pi: ExtensionAPI) {
   registerMemoryCommand(pi, "memory-nightly", {
     description: "Run the offline transcript sweep now (LLM extraction happens here, never mid-conversation).",
     handler: async (args: string, ctx: any) => {
-      const extraArgs = String(args || "").trim() ? String(args).trim().split(/\s+/) : [];
-      ctx.ui.notify("Agents Memory: 正在离线摸查近期会话（LLM 抽取在后台进程跑）…");
-      const result = await runNightlySweepProcess({ extraArgs });
-      ctx.ui.notify(result.ok ? `Nightly sweep: ${result.summary}` : `Nightly sweep failed: ${result.summary}`);
+      ctx.ui.notify("Agents Memory: 正在离线摸查近期会话（用 pi 当前模型）…");
+      const { report, consolidation } = await runNightly(ctx, args);
+      ctx.ui.notify(`Nightly sweep: ${nightlySummary(report, consolidation)}`, report.errors.length ? "warning" : "info");
     },
   });
 

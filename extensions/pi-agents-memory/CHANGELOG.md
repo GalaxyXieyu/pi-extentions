@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.2 - 2026-08-31
+
+### Fixes
+
+- **0.3.1 的那个修法还不够**：即使把 loader 发进包里，npm 安装下的夜间任务仍然跑不了 —— Node 对 `node_modules` 里的 `.ts` 直接拒绝 type-strip（`ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`）。所以抽取消搬进 pi 进程：新增 `core/nightly-runner.ts`（唯一实现）+ `providers/*/nightly.ts`（后端适配器），launchd 任务改为无头 pi（`pi -p --no-session --no-tools` + `PI_MEMORY_NIGHTLY_RUN=1`），`session_start` 里跑完就 exit，不给模型发 prompt、不召回、不写会话。模型用 pi 当前的 provider/凭据，不再嵌 `pi -p` 子进程。`scripts/nightly-sweep.mjs` 降级为开发者入口（仅仓库 checkout 可用）。
+- 无头跑现在强制向 stdout + `PI_MEMORY_NIGHTLY_LOG` 输出每窗口结果与总览；之前它走插件 logger（默认 `logLevel=error`），等于半夜跑完什么痕迹都看不到。
+- `scripts/install-nightly.mjs` 只写 plist，**不会**把环境变量里的 `MEMORY_API_KEY` 自动补进去（`nightly.env` 已存在时）。换 npm 安装后需到已安装副本里重跑一次安装脚本，plist 才会指向包内路径。
+
 ## 0.3.1 - 2026-08-31
 
 ### Fixes

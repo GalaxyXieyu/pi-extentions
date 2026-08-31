@@ -4,27 +4,22 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
 /**
- * Nightly memory sweep entry point.
+ * Developer entry point for the nightly sweep.
  *
- * Runs outside pi: it reads pi's session transcripts from disk, sends them
- * through the batch LLM curator, and writes accepted memories through the
- * active backend provider. Conversation capture never calls a model — this is
- * the only scheduled model work in the plugin.
+ * The scheduled job does NOT use this: launchd runs a headless pi with
+ * PI_MEMORY_NIGHTLY_RUN=1 (see scripts/install-nightly.mjs), because Node
+ * refuses to type-strip TypeScript inside node_modules and an npm install of
+ * this plugin lives exactly there. Use this script only from a repo checkout,
+ * e.g. to curate one workspace by hand:
  *
- *   node --experimental-strip-types scripts/nightly-sweep.mjs [--since-hours 26] [--dry-run]
+ *   node --experimental-strip-types scripts/nightly-sweep.mjs --since-hours 6
  *
- * LLM source: PI_MEMORY_LLM_URL (any OpenAI-compatible /chat/completions) when
- * set, otherwise a `pi -p --no-session --no-tools` subprocess so the sweep
- * reuses pi's own provider, model and stored credentials.
+ * Model source here: PI_MEMORY_LLM_URL when set, otherwise a nested
+ * `pi -p --no-session --no-tools` subprocess.
  */
 
 const here = new URL("./", import.meta.url);
-// The sweep runs outside pi with no build step, so it resolves the plugin's
-// relative `.js` specifiers onto the sibling `.ts` sources itself. This loader
-// ships with the package: `tests/` is excluded from the npm tarball, and an
-// earlier version depended on the test-only resolvers, which made a scheduled
-// sweep from an npm install die before it read a single transcript.
-await import(new URL("./lib/register-loader.mjs", here).href);
+register(new URL("./lib/ts-resolver.mjs", here).href, import.meta.url);
 
 const args = parseArgs(process.argv.slice(2));
 if (args.help) {
@@ -33,8 +28,8 @@ if (args.help) {
 }
 
 const { loadCanonicalConfig } = await import("../core/config-protocol.js");
-const { runNightlySweep, makePiCliComplete, piSessionsDir, nightlyContextFor } = await import("../core/nightly.js");
-const { consolidateLocal } = await import("../core/consolidation.js");
+const { runNightlyInProcess } = await import("../core/nightly-runner.js");
+const { makePiCliComplete } = await import("../core/nightly.js");
 const { llmEndpoint, llmExtractionEnabled } = await import("../core/llm-extractor.js");
 
 const logFile = args.log || process.env.PI_MEMORY_NIGHTLY_LOG;
@@ -48,99 +43,43 @@ const log = (line) => {
 
 const canonical = loadCanonicalConfig(process.env);
 if (!canonical.valid) fail(`config invalid: ${canonical.errors.join("; ")}`);
-
 const backend = args.backend || canonical.config.backend;
 if (!backend) fail("PI_MEMORY_BACKEND is not set");
+if (!llmExtractionEnabled()) fail("PI_MEMORY_LLM_ENABLED=0 disables every model path, including this sweep");
 
-const { provider: baseProvider, config, makeProvider } = await buildProvider(backend, log);
+const { config, providerFor } = await buildBackend(backend, log);
+const complete = llmEndpoint() ? null : makePiCliComplete({ model: args.model });
+log(complete ? "llm via nested pi CLI (dev entry)" : `llm via endpoint ${llmEndpoint()}`);
 
-if (!llmExtractionEnabled()) fail("PI_MEMORY_LLM_ENABLED=0 — LLM curation is disabled for every path, including the nightly sweep");
-
-// An explicit endpoint wins so a machine with Ollama running never needs pi's
-// credentials; otherwise borrow pi's provider/auth through the CLI.
-const complete = llmEndpoint() ? undefined : makePiCliComplete({ model: args.model });
-if (complete) log(`llm via pi CLI${args.model ? ` (${args.model})` : ""}`);
-else log(`llm via endpoint ${llmEndpoint()}`);
-
-const contexts = new Map();
-const providers = new Map();
-const providerFor = async (context) => {
-  const key = String(context.identity.workspaceId || "local");
-  if (!providers.has(key)) {
-    const instance = await makeProvider(key);
-    instance.setPilotComplete(complete ?? null);
-    providers.set(key, instance);
-  }
-  return providers.get(key);
-};
-
-log(`sessions root: ${args.root || piSessionsDir()}`);
-const report = await runNightlySweep({
-  now: args.at ? new Date(args.at) : new Date(),
+const { report } = await runNightlyInProcess({
   sinceHours: args.sinceHours ? Number(args.sinceHours) : undefined,
-  root: args.root,
-  stateFile: args.state,
-  dryRun: Boolean(args.dryRun),
   limit: args.limit ? Number(args.limit) : undefined,
   windowChars: args.windowChars ? Number(args.windowChars) : undefined,
   maxWindowsPerFile: args.maxWindows ? Number(args.maxWindows) : undefined,
+  dryRun: Boolean(args.dryRun),
+  consolidate: args.consolidate !== false,
+  base: { userId: config.userId || config.user, agentId: config.assistantId || "pi" },
+  complete,
+  providerFor,
   log,
-  contextFor: (cwd) => {
-    if (!contexts.has(cwd)) contexts.set(cwd, nightlyContextFor(cwd, { userId: config.userId || config.user, agentId: config.assistantId }));
-    return contexts.get(cwd);
-  },
-  curate: async (batch, sessionId, context) => {
-    if (args.dryRun) {
-      log(`dry-run ${context.identity.workspaceId} :: ${sessionId} -> ${batch.length} messages, ${batch.reduce((n, m) => n + m.content.length, 0)} chars`);
-      return { handled: true, count: 0, rejected: 0 };
-    }
-    const provider = await providerFor(context);
-    return provider.curateBatch(batch, sessionId, context);
-  },
 });
-
-let consolidationFindings = 0;
-if (!args.dryRun && args.consolidate !== false) {
-  for (const context of contexts.values()) {
-    try { consolidationFindings += consolidateLocal(context.identity).length; } catch (error) { log(`consolidation skipped: ${String(error?.message || error)}`); }
-  }
-}
-
-log(`done: scanned=${report.scanned} processed=${report.processed} skipped=${report.skipped} resumed=${report.resumed} windows=${report.windows} batches=${report.batches} memories=${report.memories} rejected=${report.rejected} oversize=${report.oversize} workspaces=${report.workspaces.length} consolidation=${consolidationFindings}`);
-if (report.errors.length) log(`errors: ${report.errors.slice(0, 5).join(" | ")}`);
 process.exit(report.errors.length && !report.processed ? 1 : 0);
 
-async function buildProvider(id, logger) {
+async function buildBackend(id, logger) {
   if (id === "viking-memory") {
     const { loadConfigFromModuleUrl } = await import("../providers/viking-memory/config.js");
-    const { VikingMemoryClient } = await import("../providers/viking-memory/client.js");
-    const { VikingMemoryProvider } = await import("../providers/viking-memory/provider.js");
+    const { createVikingNightlyProvider } = await import("../providers/viking-memory/nightly.js");
     const base = loadConfigFromModuleUrl(new URL("../providers/viking-memory/index.ts", here).href);
     applyCanonical(base);
-    if (!base.apiKey) fail("MEMORY_API_KEY is not set — cannot write memories from the nightly sweep");
-    const probe = new VikingMemoryProvider(new VikingMemoryClient(base), base);
-    if (!(await probe.health())) logger("warning: backend health check failed; writes may be skipped");
-    return {
-      config: base,
-      provider: probe,
-      makeProvider: async (workspaceId) => {
-        const scoped = { ...base, groupId: workspaceId };
-        return new VikingMemoryProvider(new VikingMemoryClient(scoped), scoped);
-      },
-    };
+    if (!base.apiKey) fail("MEMORY_API_KEY is not set — the sweep cannot write memories");
+    return { config: base, providerFor: createVikingNightlyProvider(base) };
   }
   const { loadConfigFromModuleUrl } = await import("../providers/openviking/config.js");
-  const { OVClient } = await import("../providers/openviking/client.js");
-  const { OpenVikingProvider } = await import("../providers/openviking/provider.js");
+  const { createOpenVikingNightlyProvider } = await import("../providers/openviking/nightly.js");
   const base = loadConfigFromModuleUrl(new URL("../providers/openviking/index.ts", here).href);
   applyCanonical(base);
-  const probe = new OpenVikingProvider(new OVClient(base), base);
-  if (!(await probe.health?.().catch(() => false))) logger("warning: OpenViking health check failed; writes may be skipped");
-  return {
-    config: base,
-    provider: probe,
-    makeProvider: async () => new OpenVikingProvider(new OVClient(base), base),
-  };
+  logger(`openviking backend at ${base.url || process.env.OPENVIKING_URL || "config default"}`);
+  return { config: base, providerFor: createOpenVikingNightlyProvider(base) };
 }
 
 function applyCanonical(target) {

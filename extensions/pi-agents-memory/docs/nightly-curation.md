@@ -31,12 +31,11 @@
 
 ## LLM 从哪来
 
-`scripts/nightly-sweep.mjs` 按顺序选：
+**定时任务跑在 pi 进程里**,不是裸 node 脚本。原因很实：Node 拒绝对 `node_modules` 里的 `.ts` 做 type-strip(`ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`),而 npm 安装的插件正好就住在那里 —— 用 `node --experimental-strip-types` 直接跑包内脚本在仓库开友时能动,从 npm 装了就必挂。pi 自己带 transpiler,能加载 npm 里的 `.ts`,所以只留一条实现：`core/nightly-runner.ts`。
 
-1. `PI_MEMORY_LLM_URL` 已设置 → 直接打这个 OpenAI 兼容端点（例：本地 Ollama `http://127.0.0.1:11434/v1`，模型名 `PI_MEMORY_LLM_MODEL`）。
-2. 否则起子进程 `pi -p --no-session --no-tools --mode text @prompt.md`，复用 pi 现有 provider/模型/凭据，不需要额外配 key。
-   - `PI_MEMORY_NIGHTLY_MODEL` / `PI_MEMORY_NIGHTLY_THINKING` 可单独指定夜间用的模型和 thinking 档位（建议 `off`，抽取不需要推理链）。
-   - 子进程环境里会**删掉** `PI_MEMORY_BACKEND`、`MEMORY_CONFIG_FILE`、`PI_MEMORY_WORKSPACE_ID`，否则嵌套的 pi 会把这个记忆插件再加载一遍，对着抽取提示词自己召回/写入。
+- 调度任务 = `launchd` 起一个无头 pi(`pi -p --no-session --no-tools`)+ `PI_MEMORY_NIGHTLY_RUN=1`;`session_start` 里跑完抽取消直接 exit,**不会**给模型发 prompt,也不会召回/写会话(任务自己不会污染自己的转录)。
+- 模型源：抽取消用的是 **pi 当前会话的 provider / 模型 / 凭据**(`makeHostComplete(ctx)`),零额外配置。想固定模型用 `PI_MEMORY_NIGHTLY_MODEL=provider/model`(或 `PI_MEMORY_LLM_MODEL`)。
+- 开发者手工跑：`node --experimental-strip-types scripts/nightly-sweep.mjs`(仅仓库 checkout 可用),这条路径里模型优先 `PI_MEMORY_LLM_URL`(例：本地 Ollama `http://127.0.0.1:11434/v1` + `PI_MEMORY_LLM_MODEL`),否则嵌一个 `pi -p --no-session --no-tools` 子进程。
 
 ## 安装定时任务（macOS launchd）
 
@@ -53,9 +52,16 @@ node scripts/install-nightly.mjs --uninstall
 
 产物：
 
-- `~/Library/LaunchAgents/com.pi.agents-memory.nightly.plist`（0644，不含密钥）
+- `~/Library/LaunchAgents/com.pi.agents-memory.nightly.plist`（0644，不含密钥；里面是 headless pi 命令 +  pinned PATH）
 - `~/.pi/agent/pi-agents-memory/nightly.env`（0600，从当前 shell 里 `PI_MEMORY_/MEMORY_/VIKING_/OPENVIKING_/OV_` 前缀的变量种出来；**请在已导出 `MEMORY_API_KEY` 的终端里安装**，或用 `--force-env` 重写）
-- `~/.pi/agent/pi-agents-memory/nightly.log` / `.out` / `.err`
+- `~/.pi/agent/pi-agents-memory/nightly.log`（抽取消每窗口的结果汇总都追这里，同时迚 stdout）/ `.out` / `.err`
+
+npm 安装后记得用**已安装副本**里的安装脚本，指到包内路径：
+
+```bash
+cd ~/.pi/agent/npm/node_modules/@galaxyxieyu/pi-agents-memory
+node scripts/install-nightly.mjs
+```
 
 笔记本合盖时错过的时间点，launchd 会在唤醒后补跑一次；想主动补：`npm run nightly -- --since-hours 30`。
 
@@ -63,6 +69,8 @@ node scripts/install-nightly.mjs --uninstall
 
 | 变量 | 默认 | 作用 |
 |---|---|---|
+| `PI_MEMORY_NIGHTLY_RUN` | 空 | `1` = 无头模式：pi 启动即跑抹查然后退出（launchd 用） |
+| `PI_MEMORY_NIGHTLY_ARGS` | `--since-hours 26` | 无头跑的参数，同 `/memory-nightly`（`--dry-run`、`--limit`、`--max-windows` …） |
 | `PI_MEMORY_LLM_ENABLED` | `1` | 模型使用总开关；`0` = 连夜间抽取也只用规则 |
 | `PI_MEMORY_LLM_INLINE` | `0` | 会话内 LLM 漏斗 + LLM 冲突仲裁；`1` 恢复旧行为 |
 | `PI_MEMORY_NIGHTLY_HOURS` | `26` | 夜间窗口，往前捞多少小时 |

@@ -2,8 +2,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, 
 import { createHash, randomBytes } from "node:crypto";
 import { homedir, tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
-import { spawn, spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { spawnSync } from "node:child_process";
 import type { MemoryMessage } from "./provider.js";
 import { localIdentity, requestContext, type MemoryRequestContext } from "./contracts.js";
 import { resolveWorkspaceIdentity } from "./workspace-identity.js";
@@ -679,27 +678,6 @@ function childEnv(): NodeJS.ProcessEnv {
 
 export function defaultNightlyWorkspaceLabel(cwd: string): string {
   return resolveWorkspaceIdentity({ cwd }).id;
-}
-
-/**
- * Launch the standalone sweep script as a child process. Used by the
- * `/memory-nightly` command so a manual run behaves exactly like the
- * scheduled one instead of duplicating its wiring.
- */
-export function runNightlySweepProcess(options: { extraArgs?: string[]; timeoutMs?: number; scriptPath?: string } = {}): Promise<{ ok: boolean; summary: string; output: string }> {
-  const script = options.scriptPath || fileURLToPath(new URL("../scripts/nightly-sweep.mjs", import.meta.url));
-  const args = ["--experimental-strip-types", "--no-warnings", script, ...(options.extraArgs || [])];
-  return new Promise((resolvePromise) => {
-    const child = spawn(process.execPath, args, { env: process.env, timeout: options.timeoutMs ?? Number(process.env.PI_MEMORY_NIGHTLY_TIMEOUT_MS || 1800000) });
-    let output = "";
-    child.stdout?.on("data", (chunk) => { output += String(chunk); });
-    child.stderr?.on("data", (chunk) => { output += String(chunk); });
-    child.on("close", (code) => {
-      const lines = output.trim().split("\n").filter(Boolean);
-      resolvePromise({ ok: code === 0, summary: lines[lines.length - 1] || `exit ${code}`, output });
-    });
-    child.on("error", (error) => resolvePromise({ ok: false, summary: String(error?.message || error), output }));
-  });
 }
 
 function shortHash(value: string): string {
