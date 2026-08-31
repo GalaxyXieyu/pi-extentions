@@ -19,13 +19,12 @@ import { dirname } from "node:path";
  */
 
 const here = new URL("./", import.meta.url);
-// Same .js -> .ts resolvers the test runner uses; must be registered before
-// any dynamic import of the TypeScript sources.
-for (const loader of [
-  "../tests/register-loader.mjs",
-  "../providers/openviking/tests/register-loader.mjs",
-  "../providers/viking-memory/tests/register-loader.mjs",
-]) await import(new URL(loader, here).href);
+// The sweep runs outside pi with no build step, so it resolves the plugin's
+// relative `.js` specifiers onto the sibling `.ts` sources itself. This loader
+// ships with the package: `tests/` is excluded from the npm tarball, and an
+// earlier version depended on the test-only resolvers, which made a scheduled
+// sweep from an npm install die before it read a single transcript.
+await import(new URL("./lib/register-loader.mjs", here).href);
 
 const args = parseArgs(process.argv.slice(2));
 if (args.help) {

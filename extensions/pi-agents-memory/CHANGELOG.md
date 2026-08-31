@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.1 - 2026-08-31
+
+### Fixes
+
+- **修好从 npm 安装时的夜间抹查**。`scripts/nightly-sweep.mjs` 之前靠 `tests/` 和 `providers/*/tests/` 里的 `.js -> .ts` resolve hook 加载 TypeScript 源码，而 `.npmignore` 不把 `tests/` 进包：npm 安装后定时任务会在读任何会话之前直接 `ERR_MODULE_NOT_FOUND` 退出（本地仓库开发时因为 `tests/` 存在而看不出来）。现在 `scripts/lib/{ts-resolver,register-loader}.mjs` 随身发布（已加入 `files`），一个全局 hook 覆盖整个包，不再依赖只用于测试的 loader。验证：`npm pack` 解出的包（无 `tests/`）能 `--dry-run` 扫完 3 个会话。
+
 ## 0.3.0 - 2026-08-31
 
 ### Breaking

@@ -19,7 +19,7 @@ import { inlineLlmEnabled } from "../../core/llm-extractor.js";
 import { resolveWorkspaceIdentity } from "../../core/workspace-identity.js";
 
 /** Keep in sync with package.json; surfaced in /memory for version checks. */
-export const EXTENSION_VERSION = "0.3.0";
+export const EXTENSION_VERSION = "0.3.1";
 
 export default async function (pi: ExtensionAPI) {
   const config = loadConfigFromModuleUrl(import.meta.url);

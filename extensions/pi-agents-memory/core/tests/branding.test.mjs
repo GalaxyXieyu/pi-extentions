@@ -99,3 +99,15 @@ test("the nightly sweep resolves the pi CLI even with launchd's bare PATH", asyn
   assert.equal(resolvePiCli("/definitely/not/here", {}, home), null, "an explicit bad path is reported as missing");
   rmSync(home, { recursive: true, force: true });
 });
+
+test("the nightly sweep ships its own TS loader (tests/ is not published)", () => {
+  const root = join(import.meta.dirname, "..", "..");
+  const script = readFileSync(join(root, "scripts/nightly-sweep.mjs"), "utf8");
+  const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+  assert.ok(!/\.\.\/tests\/|providers\/\*\/tests/.test(script), "the sweep must not import test-only resolvers");
+  assert.ok(script.includes("./lib/register-loader.mjs"), "the sweep registers the shipped loader");
+  for (const file of ["scripts/lib/register-loader.mjs", "scripts/lib/ts-resolver.mjs"]) {
+    assert.ok(existsSync(join(root, file)), `${file} must exist`);
+  }
+  assert.ok(pkg.files.includes("scripts/lib/*.mjs"), "package files allowlist must ship scripts/lib");
+});
