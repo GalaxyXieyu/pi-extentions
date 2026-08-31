@@ -126,15 +126,15 @@ function zshCommand() {
     `export PATH=${quote(jobPath())}:$PATH`,
     `[ -f ${quote(envFile)} ] && { set -a; . ${quote(envFile)}; set +a; } || true`,
     `export PI_MEMORY_NIGHTLY_LOG=${quote(join(stateDir, "nightly.log"))}`,
-    // The sweep runs inside pi: pi loads the plugin's TypeScript from wherever
-    // it is installed, while plain node cannot type-strip .ts under
-    // node_modules at all. So the job is a headless pi, not a node script.
-    "export PI_MEMORY_NIGHTLY_RUN=1",
-    `export PI_MEMORY_NIGHTLY_ARGS=${quote(argsValue())}`,
-    `exec ${quote(piCli())} -p --no-session --no-tools --mode text "${LABEL}: run memory sweep"`,
+    // pi executes a leading-slash prompt as a registered command, so the
+    // scheduled entry point is exactly the interactive one: no nested model
+    // call for the trigger, no node type-stripping (which node refuses to do
+    // for the .ts sources of an npm-installed package), one code path.
+    `exec ${quote(piCli())} -p --no-session --no-tools --mode text ${quote(`/memory-nightly ${argsValue()}`)}`,
   ].join(" && ");
 }
 
+/** Flags handed to /memory-nightly; override with PI_MEMORY_NIGHTLY_ARGS. */
 function argsValue() {
   return process.env.PI_MEMORY_NIGHTLY_ARGS || `--since-hours ${process.env.PI_MEMORY_NIGHTLY_HOURS || 26}`;
 }

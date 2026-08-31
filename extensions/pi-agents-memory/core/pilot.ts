@@ -26,13 +26,21 @@ export function resolvePilotModel(ctx: any): any {
   return ctx?.model;
 }
 
-/**
- * Build the completion hook from a ctx getter, or null when in-session model
+/** Build the completion hook from a ctx getter, or null when in-session model
  * use is off. Null here means both the rule-miss funnel and the conflict
  * arbiter degrade to pure rules, which is the default.
  */
 export function makePilotComplete(getCtx: () => any): LlmCompleteFn | null {
   if (!inlineLlmEnabled()) return null;
+  return makeHostComplete(getCtx);
+}
+
+/**
+ * Ungated host completion hook. The nightly sweep must reach the model even
+ * though in-session model use is off by default, so it asks for this
+ * explicitly instead of reusing the inline gate.
+ */
+export function makeHostComplete(getCtx: () => any): LlmCompleteFn {
   return async (messages) => {
     const ctx = getCtx();
     const registry = ctx?.modelRegistry;

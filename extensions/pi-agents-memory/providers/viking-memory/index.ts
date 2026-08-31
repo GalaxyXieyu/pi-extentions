@@ -20,7 +20,7 @@ import { inlineLlmEnabled } from "../../core/llm-extractor.js";
 import { resolveWorkspaceIdentity } from "../../core/workspace-identity.js";
 
 /** Keep in sync with package.json; surfaced in /memory for version checks. */
-export const EXTENSION_VERSION = "0.3.2";
+export const EXTENSION_VERSION = "0.3.3";
 
 export default async function (pi: ExtensionAPI) {
   const config = loadConfigFromModuleUrl(import.meta.url);
@@ -104,18 +104,7 @@ export default async function (pi: ExtensionAPI) {
     log,
   });
 
-  // launchd starts a headless pi with PI_MEMORY_NIGHTLY_RUN=1: curate, print,
-  // exit. No session is created and nothing is recalled, so the sweep cannot
-  // pollute its own transcript.
-  const headlessNightly = process.env.PI_MEMORY_NIGHTLY_RUN === "1";
-
-  pi.on("session_start", async (_event, ctx) => {
-    if (headlessNightly) {
-      const { report } = await runNightly(ctx, process.env.PI_MEMORY_NIGHTLY_ARGS || "");
-      process.exit(report.errors.length && !report.processed ? 1 : 0);
-    }
-    await start(ctx);
-  });
+  pi.on("session_start", async (_event, ctx) => { await start(ctx); });
 
   pi.on("before_agent_start", async (event: any, ctx: any) => {
     await start(ctx);

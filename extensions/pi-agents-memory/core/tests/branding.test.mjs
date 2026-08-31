@@ -103,12 +103,12 @@ test("the nightly sweep resolves the pi CLI even with launchd's bare PATH", asyn
 test("the scheduled sweep runs inside pi, not as a bare node script", () => {
   const root = join(import.meta.dirname, "..", "..");
   const installer = readFileSync(join(root, "scripts/install-nightly.mjs"), "utf8");
-  assert.ok(installer.includes("PI_MEMORY_NIGHTLY_RUN=1"), "launchd must start pi headless");
+  assert.ok(/\/memory-nightly/.test(installer), "launchd must drive the same /memory-nightly command pi registers");
   assert.ok(!/--experimental-strip-types[^"]*\$\{quote\(scriptPath\)/.test(installer), "node cannot type-strip .ts inside node_modules, so the job must not exec the plugin sources");
   for (const entry of ["providers/viking-memory/index.ts", "providers/openviking/index.ts"]) {
     const source = readFileSync(join(root, entry), "utf8");
-    assert.ok(source.includes("process.env.PI_MEMORY_NIGHTLY_RUN"), `${entry} must honour the headless flag`);
     assert.ok(source.includes("runNightlyInProcess"), `${entry} must share the one sweep implementation`);
+    assert.ok(source.includes('"memory-nightly"'), `${entry} must expose /memory-nightly`);
   }
 });
 

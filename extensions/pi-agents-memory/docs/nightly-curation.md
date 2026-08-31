@@ -33,8 +33,10 @@
 
 **定时任务跑在 pi 进程里**,不是裸 node 脚本。原因很实：Node 拒绝对 `node_modules` 里的 `.ts` 做 type-strip(`ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`),而 npm 安装的插件正好就住在那里 —— 用 `node --experimental-strip-types` 直接跑包内脚本在仓库开友时能动,从 npm 装了就必挂。pi 自己带 transpiler,能加载 npm 里的 `.ts`,所以只留一条实现：`core/nightly-runner.ts`。
 
-- 调度任务 = `launchd` 起一个无头 pi(`pi -p --no-session --no-tools`)+ `PI_MEMORY_NIGHTLY_RUN=1`;`session_start` 里跑完抽取消直接 exit,**不会**给模型发 prompt,也不会召回/写会话(任务自己不会污染自己的转录)。
-- 模型源：抽取消用的是 **pi 当前会话的 provider / 模型 / 凭据**(`makeHostComplete(ctx)`),零额外配置。想固定模型用 `PI_MEMORY_NIGHTLY_MODEL=provider/model`(或 `PI_MEMORY_LLM_MODEL`)。
+- 调度任务 = `launchd` 起一个无头 pi,把注册好的斜杠命令当 prompt 交给它:
+  `pi -p --no-session --no-tools --mode text "/memory-nightly --since-hours 26"`。
+  pi 会把开头带 `/` 的 prompt 当命令执行,所以定时入口和你手敲的 `/memory-nightly` 是**同一条代码路径**(`core/nightly-runner.ts`),没有第二套实现,也不会先给模型发一次触发用的 prompt。
+- 模型源：抽取消用的是 **pi 当前 provider 与凭据**(`makeHostComplete(ctx)`),零额外配置。想固定模型用 `PI_MEMORY_NIGHTLY_MODEL=provider/model`(`pi -p` 侧还可加 `--model`);抽取消本身不吃 reasoning,想省钱设 `PI_MEMORY_NIGHTLY_THINKING=off`。
 - 开发者手工跑：`node --experimental-strip-types scripts/nightly-sweep.mjs`(仅仓库 checkout 可用),这条路径里模型优先 `PI_MEMORY_LLM_URL`(例：本地 Ollama `http://127.0.0.1:11434/v1` + `PI_MEMORY_LLM_MODEL`),否则嵌一个 `pi -p --no-session --no-tools` 子进程。
 
 ## 安装定时任务（macOS launchd）
@@ -69,8 +71,7 @@ node scripts/install-nightly.mjs
 
 | 变量 | 默认 | 作用 |
 |---|---|---|
-| `PI_MEMORY_NIGHTLY_RUN` | 空 | `1` = 无头模式：pi 启动即跑抹查然后退出（launchd 用） |
-| `PI_MEMORY_NIGHTLY_ARGS` | `--since-hours 26` | 无头跑的参数，同 `/memory-nightly`（`--dry-run`、`--limit`、`--max-windows` …） |
+| `PI_MEMORY_NIGHTLY_ARGS` | `--since-hours 26` | 安装时写进任务的命令参数,同 `/memory-nightly`(`--dry-run`、`--limit`、`--max-windows` …) |
 | `PI_MEMORY_LLM_ENABLED` | `1` | 模型使用总开关；`0` = 连夜间抽取也只用规则 |
 | `PI_MEMORY_LLM_INLINE` | `0` | 会话内 LLM 漏斗 + LLM 冲突仲裁；`1` 恢复旧行为 |
 | `PI_MEMORY_NIGHTLY_HOURS` | `26` | 夜间窗口，往前捞多少小时 |

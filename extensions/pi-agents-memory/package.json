@@ -1,6 +1,6 @@
 {
   "name": "@galaxyxieyu/pi-agents-memory",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "A unified Pi memory extension (keyword-first capture, nightly LLM transcript curation, workspace isolation, lifecycle ledger, audit, TUI memory cards) backed by Viking Memory or OpenViking.",
   "license": "MIT",
   "type": "module",
@@ -36,8 +36,8 @@
   ],
   "scripts": {
     "test": "vitest run --root ../.. --config vitest.config.ts",
-    "nightly": "PI_MEMORY_NIGHTLY_RUN=1 pi -p --no-session --no-tools --mode text \"memory nightly sweep\"",
-    "nightly:dry": "PI_MEMORY_NIGHTLY_RUN=1 PI_MEMORY_NIGHTLY_ARGS=\"--dry-run\" pi -p --no-session --no-tools --mode text \"memory nightly sweep\"",
+    "nightly": "pi -p --no-session --no-tools --mode text \"/memory-nightly\"",
+    "nightly:dry": "pi -p --no-session --no-tools --mode text \"/memory-nightly --dry-run\"",
     "nightly:install": "node scripts/install-nightly.mjs",
     "nightly:uninstall": "node scripts/install-nightly.mjs --uninstall"
   },

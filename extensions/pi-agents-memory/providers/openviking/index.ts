@@ -181,16 +181,8 @@ export default async function (pi: ExtensionAPI) {
     log: debugLog,
   });
 
-  // launchd starts a headless pi with PI_MEMORY_NIGHTLY_RUN=1: curate, print,
-  // exit before pi would send anything to a model.
-  const headlessNightly = process.env.PI_MEMORY_NIGHTLY_RUN === "1";
-
   // --- session_start ---
   pi.on("session_start", async (event, ctx) => {
-    if (headlessNightly) {
-      const { report } = await runNightly(ctx, process.env.PI_MEMORY_NIGHTLY_ARGS || "");
-      process.exit(report.errors.length && !report.processed ? 1 : 0);
-    }
     await start(ctx);
   });
 
@@ -339,6 +331,7 @@ export default async function (pi: ExtensionAPI) {
   registerMemoryCommand(pi, "memory-nightly", {
     description: "Run the offline transcript sweep now (LLM extraction happens here, never mid-conversation).",
     handler: async (args: string, ctx: any) => {
+      await start(ctx);
       ctx.ui.notify("Agents Memory: 正在离线摸查近期会话（用 pi 当前模型）…");
       const { report, consolidation } = await runNightly(ctx, args);
       ctx.ui.notify(`Nightly sweep: ${nightlySummary(report, consolidation)}`, report.errors.length ? "warning" : "info");
