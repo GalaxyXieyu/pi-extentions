@@ -20,7 +20,7 @@ import { inlineLlmEnabled } from "../../core/llm-extractor.js";
 import { resolveWorkspaceIdentity } from "../../core/workspace-identity.js";
 
 /** Keep in sync with package.json; surfaced in /memory for version checks. */
-export const EXTENSION_VERSION = "0.3.3";
+export const EXTENSION_VERSION = "0.3.4";
 
 export default async function (pi: ExtensionAPI) {
   const config = loadConfigFromModuleUrl(import.meta.url);
@@ -104,7 +104,25 @@ export default async function (pi: ExtensionAPI) {
     log,
   });
 
-  pi.on("session_start", async (_event, ctx) => { await start(ctx); });
+  // Scheduled entry point: launchd starts a headless pi with
+  // PI_MEMORY_NIGHTLY_RUN=1. pi awaits extension hooks, so the sweep runs to
+  // completion here and we exit before the trigger prompt can reach a model.
+  // A leading-slash prompt cannot be used for this: pi dispatches commands
+  // without awaiting their handler, so the process dies mid-sweep.
+  const headlessNightly = process.env.PI_MEMORY_NIGHTLY_RUN === "1";
+
+  pi.on("session_start", async (_event, ctx) => {
+    if (headlessNightly) {
+      try {
+        const { report } = await runNightly(ctx, process.env.PI_MEMORY_NIGHTLY_ARGS || "");
+        process.exit(report.errors.length && !report.processed ? 1 : 0);
+      } catch (error) {
+        process.stderr.write(`[memory-nightly] fatal: ${String((error as any)?.message || error)}\n`);
+        process.exit(1);
+      }
+    }
+    await start(ctx);
+  });
 
   pi.on("before_agent_start", async (event: any, ctx: any) => {
     await start(ctx);

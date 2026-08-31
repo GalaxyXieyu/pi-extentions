@@ -33,10 +33,9 @@
 
 **定时任务跑在 pi 进程里**,不是裸 node 脚本。原因很实：Node 拒绝对 `node_modules` 里的 `.ts` 做 type-strip(`ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`),而 npm 安装的插件正好就住在那里 —— 用 `node --experimental-strip-types` 直接跑包内脚本在仓库开友时能动,从 npm 装了就必挂。pi 自己带 transpiler,能加载 npm 里的 `.ts`,所以只留一条实现：`core/nightly-runner.ts`。
 
-- 调度任务 = `launchd` 起一个无头 pi,把注册好的斜杠命令当 prompt 交给它:
-  `pi -p --no-session --no-tools --mode text "/memory-nightly --since-hours 26"`。
-  pi 会把开头带 `/` 的 prompt 当命令执行,所以定时入口和你手敲的 `/memory-nightly` 是**同一条代码路径**(`core/nightly-runner.ts`),没有第二套实现,也不会先给模型发一次触发用的 prompt。
-- 模型源：抽取消用的是 **pi 当前 provider 与凭据**(`makeHostComplete(ctx)`),零额外配置。想固定模型用 `PI_MEMORY_NIGHTLY_MODEL=provider/model`(`pi -p` 侧还可加 `--model`);抽取消本身不吃 reasoning,想省钱设 `PI_MEMORY_NIGHTLY_THINKING=off`。
+- 调度任务 = `launchd` 起一个无头 pi(`pi -p --no-session --no-tools` + `PI_MEMORY_NIGHTLY_RUN=1` + `PI_MEMORY_NIGHTLY_ARGS`)。
+  扩展的 `session_start` 钩子检测到该标志后跑 `core/nightly-runner.ts`,跑完 `process.exit()` —— pi 会 await 扩展钩子,所以 sweep 能跑完;触发用的 prompt 也不会到达模型。注意不能用 `pi -p "/memory-nightly"` 当定时入口：pi 派发命令时**不 await 处理器**,进程会立刻退出。交互式手跑仍用 `/memory-nightly`,与定时任务同一条实现。
+- 模型源：抽取消用的是 **pi 当前 provider 与凭据**(`makeHostComplete(ctx)`),零额外配置。想固定模型用 `PI_MEMORY_NIGHTLY_MODEL=provider/model`;抽取消本身不吃 reasoning,想省钱设 `PI_MEMORY_NIGHTLY_THINKING=off`。
 - 开发者手工跑：`node --experimental-strip-types scripts/nightly-sweep.mjs`(仅仓库 checkout 可用),这条路径里模型优先 `PI_MEMORY_LLM_URL`(例：本地 Ollama `http://127.0.0.1:11434/v1` + `PI_MEMORY_LLM_MODEL`),否则嵌一个 `pi -p --no-session --no-tools` 子进程。
 
 ## 安装定时任务（macOS launchd）
@@ -71,7 +70,8 @@ node scripts/install-nightly.mjs
 
 | 变量 | 默认 | 作用 |
 |---|---|---|
-| `PI_MEMORY_NIGHTLY_ARGS` | `--since-hours 26` | 安装时写进任务的命令参数,同 `/memory-nightly`(`--dry-run`、`--limit`、`--max-windows` …) |
+| `PI_MEMORY_NIGHTLY_RUN` | 空 | `1` = 无头模式：pi 启动即跑抹查然后退出（launchd 用） |
+| `PI_MEMORY_NIGHTLY_ARGS` | `--since-hours 26` | 安装时写进任务的参数,同 `/memory-nightly`（`--dry-run`、`--limit`、`--max-windows` …） |
 | `PI_MEMORY_LLM_ENABLED` | `1` | 模型使用总开关；`0` = 连夜间抽取也只用规则 |
 | `PI_MEMORY_LLM_INLINE` | `0` | 会话内 LLM 漏斗 + LLM 冲突仲裁；`1` 恢复旧行为 |
 | `PI_MEMORY_NIGHTLY_HOURS` | `26` | 夜间窗口，往前捞多少小时 |

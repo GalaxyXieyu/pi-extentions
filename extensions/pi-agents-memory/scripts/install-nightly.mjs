@@ -126,11 +126,12 @@ function zshCommand() {
     `export PATH=${quote(jobPath())}:$PATH`,
     `[ -f ${quote(envFile)} ] && { set -a; . ${quote(envFile)}; set +a; } || true`,
     `export PI_MEMORY_NIGHTLY_LOG=${quote(join(stateDir, "nightly.log"))}`,
-    // pi executes a leading-slash prompt as a registered command, so the
-    // scheduled entry point is exactly the interactive one: no nested model
-    // call for the trigger, no node type-stripping (which node refuses to do
-    // for the .ts sources of an npm-installed package), one code path.
-    `exec ${quote(piCli())} -p --no-session --no-tools --mode text ${quote(`/memory-nightly ${argsValue()}`)}`,
+    // The sweep runs inside pi's session_start hook (pi awaits hooks; it does
+    // not await command handlers), so nothing about the trigger prompt reaches
+    // a model and no node type-stripping of npm-hosted .ts is involved.
+    "export PI_MEMORY_NIGHTLY_RUN=1",
+    `export PI_MEMORY_NIGHTLY_ARGS=${quote(argsValue())}`,
+    `exec ${quote(piCli())} -p --no-session --no-tools --mode text "memory nightly sweep"`,
   ].join(" && ");
 }
 

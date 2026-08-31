@@ -182,7 +182,16 @@ export default async function (pi: ExtensionAPI) {
   });
 
   // --- session_start ---
+  // Scheduled entry point: launchd starts a headless pi with
+  // PI_MEMORY_NIGHTLY_RUN=1. pi awaits extension hooks, so the sweep finishes
+  // here and we exit before the trigger prompt reaches a model.
+  const headlessNightly = process.env.PI_MEMORY_NIGHTLY_RUN === "1";
+
   pi.on("session_start", async (event, ctx) => {
+    if (headlessNightly) {
+      const { report } = await runNightly(ctx, process.env.PI_MEMORY_NIGHTLY_ARGS || "");
+      process.exit(report.errors.length && !report.processed ? 1 : 0);
+    }
     await start(ctx);
   });
 

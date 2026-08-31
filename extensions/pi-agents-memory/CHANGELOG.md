@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.4 - 2026-08-31
+
+### Fixes
+
+- **0.3.3 的定时路径又是死的**：`pi -p "/memory-nightly"` 里 pi 派发命令时**不 await 处理器**，长任务进程立刻退出 —— 夜间抹查从 npm 安装根本跑不了(0.3.2/0.3.3 均已标 deprecated)。现改为 `session_start` 钩子 + `PI_MEMORY_NIGHTLY_RUN=1`：pi 会 await 扩展钩子，所以同一套 `core/nightly-runner.ts` 能跑完再 `process.exit()`，触发用的 prompt 也不会到达模型。
+- **日志消失的根因**：`process.exit()` 会丢弃还在队列里的异步 stdout 写入；更隐蔽的是 `core/nightly-runner.ts` 漏掉了 `node:fs`/`node:path` 导入，同步写函数本身就抛 ReferenceError 且被 try/catch 吞掉。现在 sweep 日志同时落 stdout(`writeSync`)与 `PI_MEMORY_NIGHTLY_LOG`(`appendFileSync`)，已用真实 launchd 运行验证：`resume @cursor -> +2 memories -> exit 0`。
+
 ## 0.3.2 - 2026-08-31
 
 ### Fixes

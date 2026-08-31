@@ -1,5 +1,7 @@
 import { runNightlySweep, nightlyContextFor, type NightlyReport } from "./nightly.js";
 import { consolidateLocal } from "./consolidation.js";
+import { appendFileSync, mkdirSync, writeSync } from "node:fs";
+import { dirname } from "node:path";
 import type { MemoryMessage } from "./provider.js";
 import type { MemoryRequestContext } from "./contracts.js";
 import type { LlmCompleteFn } from "./llm-extractor.js";
@@ -82,7 +84,7 @@ export function nightlySummary(report: NightlyReport, consolidation: number): st
 }
 
 export async function runNightlyInProcess(options: NightlyRunnerOptions): Promise<NightlyRunOutcome> {
-  const log = options.log || ((line) => { try { process.stdout.write(`${new Date().toISOString()} ${line}\n`); } catch { /* headless logging is best effort */ } });
+  const log = lineSink(options);
   const contexts = new Map<string, MemoryRequestContext>();
   const providers = new Map<string, Awaited<ReturnType<NightlyRunnerOptions["providerFor"]>>>();
 
@@ -142,10 +144,13 @@ export async function runNightlyInProcess(options: NightlyRunnerOptions): Promis
 function lineSink(options: NightlyRunnerOptions): (line: string) => void {
   const file = process.env.PI_MEMORY_NIGHTLY_LOG || "";
   return (line: string) => {
-    const text = `[${new Date().toISOString()}] ${line}`;
-    try { process.stdout.write(`${text}\n`); } catch { /* stdout may be closed */ }
+    const text = `[${new Date().toISOString()}] ${line}\n`;
+    // Synchronous fd writes: the headless job exits with process.exit() when
+    // the sweep ends, and a buffered async write dies with it, which looks
+    // exactly like "the job ran and logged nothing".
+    try { writeSync(1, text); } catch { /* stdout may be closed */ }
     if (file) {
-      try { mkdirSync(dirname(file), { recursive: true }); appendFileSync(file, `${text}\n`); } catch { /* logging never breaks the sweep */ }
+      try { mkdirSync(dirname(file), { recursive: true }); appendFileSync(file, text); } catch { /* logging never breaks the sweep */ }
     }
     try { options.log?.(line); } catch { /* the host logger is optional */ }
   };

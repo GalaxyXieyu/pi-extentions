@@ -1,6 +1,6 @@
 {
   "name": "@galaxyxieyu/pi-agents-memory",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "A unified Pi memory extension (keyword-first capture, nightly LLM transcript curation, workspace isolation, lifecycle ledger, audit, TUI memory cards) backed by Viking Memory or OpenViking.",
   "license": "MIT",
   "type": "module",
