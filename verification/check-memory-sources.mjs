@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import { join, relative } from "node:path";
 
-const roots = ["extensions/pi-viking-memory/core", "extensions/pi-viking-memory/providers/viking-memory", "extensions/pi-viking-memory/providers/openviking"];
+const roots = ["extensions/pi-agents-memory/core", "extensions/pi-agents-memory/providers/viking-memory", "extensions/pi-agents-memory/providers/openviking"];
 const files = [];
 for (const root of roots) walk(root);
 

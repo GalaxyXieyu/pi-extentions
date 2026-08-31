@@ -1,7 +1,7 @@
-import { loadConfig } from "../extensions/pi-viking-memory/providers/openviking/config.ts";
-import { OVClient } from "../extensions/pi-viking-memory/providers/openviking/client.ts";
+import { loadConfig } from "../extensions/pi-agents-memory/providers/openviking/config.ts";
+import { OVClient } from "../extensions/pi-agents-memory/providers/openviking/client.ts";
 
-const config = loadConfig("../extensions/pi-viking-memory/providers/openviking");
+const config = loadConfig("../extensions/pi-agents-memory/providers/openviking");
 if (!config.apiKey && !process.env.OPENVIKING_URL) {
   console.log(JSON.stringify({ operation: "search_context", readOnly: true, status: "skipped", reason: "OPENVIKING credentials not configured" }));
   process.exit(0);

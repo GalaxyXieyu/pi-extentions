@@ -8,8 +8,8 @@
 
 | 后端 | 插件 | 适合场景 |
 | --- | --- | --- |
-| Viking Memory API | [`extensions/pi-viking-memory`](./extensions/pi-viking-memory) | 火山引擎远端长期记忆、用户画像、事件和会话抽取 |
-| OpenViking API | [`extensions/pi-viking-memory`](./extensions/pi-viking-memory) | OpenViking REST、`viking://` 资源、session commit 和 context takeover |
+| Viking Memory API | [`extensions/pi-agents-memory`](./extensions/pi-agents-memory) | 火山引擎远端长期记忆、用户画像、事件和会话抽取 |
+| OpenViking API | [`extensions/pi-agents-memory`](./extensions/pi-agents-memory) | OpenViking REST、`viking://` 资源、session commit 和 context takeover |
 
 两个插件可以同时安装，但同一 Pi 进程只激活一个主动写入后端：
 
@@ -17,7 +17,7 @@
 export PI_MEMORY_BACKEND=viking-memory   # 或 openviking
 ```
 
-公共契约和能力矩阵见 [`extensions/pi-viking-memory/core`](./extensions/pi-viking-memory/core)；抽取与召回模板见 [`extensions/pi-viking-memory/core/templates.md`](./extensions/pi-viking-memory/core/templates.md) 与 [`extensions/pi-viking-memory/core/memory-policy.json`](./extensions/pi-viking-memory/core/memory-policy.json)。设计依据、企业检索、生命周期、产品策略和本地 Docker 文档见 [`extensions/pi-viking-memory/docs`](./extensions/pi-viking-memory/docs)。
+公共契约和能力矩阵见 [`extensions/pi-agents-memory/core`](./extensions/pi-agents-memory/core)；抽取与召回模板见 [`extensions/pi-agents-memory/core/templates.md`](./extensions/pi-agents-memory/core/templates.md) 与 [`extensions/pi-agents-memory/core/memory-policy.json`](./extensions/pi-agents-memory/core/memory-policy.json)。设计依据、企业检索、生命周期、产品策略和本地 Docker 文档见 [`extensions/pi-agents-memory/docs`](./extensions/pi-agents-memory/docs)。
 
 切换后端后重启 Pi：
 
@@ -26,7 +26,7 @@ export PI_MEMORY_BACKEND=openviking   # 或 viking-memory
 pi
 ```
 
-排障时使用 `/viking-memory` 或 `/viking` 查看状态；将 `VIKING_MEMORY_DEBUG_LOG` 或 `OV_DEBUG_LOG` 指向本地临时文件可打开脱敏调试日志。
+排障时使用 `/memory` 查看状态（旧命令名 `/viking-memory`、`/viking` 仍作为别名可用）；将 `VIKING_MEMORY_DEBUG_LOG` 或 `OV_DEBUG_LOG` 指向本地临时文件可打开脱敏调试日志。
 
 ## 子项目
 
@@ -94,15 +94,15 @@ export VIKING_MEMORY_PROJECT='default'
 export VIKING_MEMORY_USER_ID='user_01'
 export VIKING_MEMORY_ASSISTANT_ID='pi'
 export PI_MEMORY_BACKEND=viking-memory
-pi install ./extensions/pi-viking-memory
+pi install ./extensions/pi-agents-memory
 ```
 
 OpenViking：
 
 ```bash
 export PI_MEMORY_BACKEND=openviking
-pi install ./extensions/pi-viking-memory
-node ./extensions/pi-viking-memory/scripts/setup.mjs
+pi install ./extensions/pi-agents-memory
+node ./extensions/pi-agents-memory/scripts/setup.mjs
 ```
 
 具体使用方式、测试命令和发布说明见各插件 README。不要同时让两个后端主动 capture，避免双写和重复召回。

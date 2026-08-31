@@ -5,11 +5,11 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
-const loader = join(repoRoot, "extensions/pi-viking-memory/tests/register-loader.mjs");
+const loader = join(repoRoot, "extensions/pi-agents-memory/tests/register-loader.mjs");
 const patterns = [
-  "extensions/pi-viking-memory/core/tests/*.test.mjs",
-  "extensions/pi-viking-memory/providers/openviking/tests/*.test.mjs",
-  "extensions/pi-viking-memory/providers/viking-memory/tests/*.test.mjs",
+  "extensions/pi-agents-memory/core/tests/*.test.mjs",
+  "extensions/pi-agents-memory/providers/openviking/tests/*.test.mjs",
+  "extensions/pi-agents-memory/providers/viking-memory/tests/*.test.mjs",
 ];
 const files = [];
 for (const pattern of patterns) {

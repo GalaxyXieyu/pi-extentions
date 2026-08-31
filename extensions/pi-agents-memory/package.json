@@ -1,0 +1,59 @@
+{
+  "name": "@galaxyxieyu/pi-agents-memory",
+  "version": "0.3.0",
+  "description": "A unified Pi memory extension (keyword-first capture, nightly LLM transcript curation, workspace isolation, lifecycle ledger, audit, TUI memory cards) backed by Viking Memory or OpenViking.",
+  "license": "MIT",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "agents-memory",
+    "memory",
+    "viking-memory",
+    "openviking",
+    "ai-memory"
+  ],
+  "files": [
+    "index.ts",
+    "README.md",
+    "docker-compose.openviking.yml",
+    "core/*.ts",
+    "core/*.js",
+    "core/*.mjs",
+    "core/*.json",
+    "core/*.md",
+    "core/tui/*.ts",
+    "providers/openviking/*.ts",
+    "providers/openviking/*.mjs",
+    "providers/openviking/config.json",
+    "providers/openviking/lib/*.mjs",
+    "providers/openviking/shared/*.mjs",
+    "providers/viking-memory/*.ts",
+    "providers/viking-memory/config.json",
+    "scripts/*.mjs",
+    "docs/**/*.md"
+  ],
+  "scripts": {
+    "test": "vitest run --root ../.. --config vitest.config.ts",
+    "nightly": "node --experimental-strip-types --no-warnings scripts/nightly-sweep.mjs",
+    "nightly:dry": "node --experimental-strip-types --no-warnings scripts/nightly-sweep.mjs --dry-run",
+    "nightly:install": "node scripts/install-nightly.mjs",
+    "nightly:uninstall": "node scripts/install-nightly.mjs --uninstall"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
